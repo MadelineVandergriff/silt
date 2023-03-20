@@ -1,19 +1,61 @@
 use ash::extensions::ext::DebugUtils;
 use ash::extensions::khr::{Surface, Swapchain};
-use ash::util::read_spv;
+use ash::util::{read_spv, Align};
 use ash::vk::{self, PhysicalDeviceType};
 use ash::{Device, Entry, Instance};
+use gpu_allocator::vulkan as vma;
 use itertools::Itertools;
+use memoffset::offset_of;
 use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
 use std::borrow::Cow;
+use std::cell::RefCell;
 use std::ffi::CStr;
 use std::time::Instant;
 use std::{fs, path::Path};
 use winit::event::{Event, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
 use winit::window::{Window, WindowBuilder};
+use nalgebra_glm as glm;
 
 pub type QueueFamilyIndex = u32;
+
+#[derive(Copy, Clone, Debug, Default)]
+pub struct Vertex {
+    pub pos: glm::Vec2,
+    pub color: glm::Vec3,
+}
+
+pub trait Bindable {
+    fn get_binding_description() -> vk::VertexInputBindingDescription;
+    fn get_attribute_descriptions() -> Vec<vk::VertexInputAttributeDescription>;
+}
+
+impl Bindable for Vertex {
+    fn get_binding_description() -> vk::VertexInputBindingDescription {
+        vk::VertexInputBindingDescription::builder()
+            .binding(0)
+            .stride(std::mem::size_of::<Self>() as u32)
+            .input_rate(vk::VertexInputRate::VERTEX)
+            .build()
+    }
+
+    fn get_attribute_descriptions() -> Vec<vk::VertexInputAttributeDescription> {
+        vec![
+            vk::VertexInputAttributeDescription::builder()
+                .binding(0)
+                .location(0)
+                .format(vk::Format::R32G32_SFLOAT)
+                .offset(offset_of!(Vertex, pos) as u32)
+                .build(),
+            vk::VertexInputAttributeDescription::builder()
+                .binding(0)
+                .location(1)
+                .format(vk::Format::R32G32B32_SFLOAT)
+                .offset(offset_of!(Vertex, color) as u32)
+                .build()
+        ]
+    }
+}
 
 pub struct FrameData {
     pub command_buffer: vk::CommandBuffer,
@@ -40,6 +82,8 @@ pub struct VulkanData {
     pub queue_family_index: u32,
     pub queue: vk::Queue,
 
+    pub allocator: RefCell<vma::Allocator>,
+
     pub surface_capabilities: vk::SurfaceCapabilitiesKHR,
     pub surface_format: vk::SurfaceFormatKHR,
     pub present_mode: vk::PresentModeKHR,
@@ -57,6 +101,10 @@ pub struct VulkanData {
     pub pipeline: vk::Pipeline,
 
     pub framebuffers: Vec<vk::Framebuffer>,
+    
+    pub vertex_buffer: vk::Buffer,
+    pub vertex_buffer_allocation: vma::Allocation,
+
     pub command_pool: vk::CommandPool,
 
     pub frame_data: Vec<FrameData>,
@@ -69,12 +117,28 @@ impl VulkanData {
         unsafe {
             let frames_in_flight: u32 = 2;
             let (width, height) = (640, 480);
+
+            let vertices = [
+                Vertex {
+                    pos: glm::vec2(0., -0.5),
+                    color: glm::vec3(1., 0., 0.),
+                },
+                Vertex {
+                    pos: glm::vec2(0.5, 0.5),
+                    color: glm::vec3(0., 1., 0.),
+                },
+                Vertex {
+                    pos: glm::vec2(-0.5, 0.5),
+                    color: glm::vec3(0., 0., 1.),
+                }
+            ];
             let (window, event_loop) = get_window(width, height);
             let (entry, instance) = get_instance(&window);
             let (debug_utils_loader, debug_callback) = get_debug_hooks(&entry, &instance);
             let (surface_loader, surface) = get_surface(&window, &entry, &instance);
             let (pdevice, device, queue_family_index, queue) =
                 get_device_and_queue(&instance, &surface_loader, &surface);
+            let allocator = get_allocator(&instance, &device, &pdevice);
             let (surface_capabilities, surface_format, present_mode) =
                 get_surface_properties(&surface_loader, &surface, &pdevice);
             let (swapchain_loader, swapchain, image_extent) = get_swapchain(
@@ -89,10 +153,11 @@ impl VulkanData {
             );
             let (images, image_views) =
                 get_image_views(&device, &swapchain_loader, &swapchain, surface_format);
-            let render_pass = get_triangle_render_pass(&device, surface_format);
+            let render_pass = get_vertex_buffers_render_pass(&device, surface_format);
             let (shader_modules, pipeline_layout, pipeline) =
-                get_triangle_pipeline(&device, &render_pass);
+                get_vertex_buffers_pipeline(&device, &render_pass);
             let framebuffers = get_framebuffers(&device, &image_views, image_extent, &render_pass);
+            let (vertex_buffer, vertex_buffer_allocation) = get_vertex_buffer(&device, &mut allocator.borrow_mut(), &vertices);
             let (command_pool, command_buffers) =
                 get_command_buffers(&device, queue_family_index, frames_in_flight);
             let sync_objects = get_semaphores(&device, frames_in_flight);
@@ -123,6 +188,7 @@ impl VulkanData {
                 device,
                 queue_family_index,
                 queue,
+                allocator,
                 surface_capabilities,
                 surface_format,
                 present_mode,
@@ -136,6 +202,8 @@ impl VulkanData {
                 pipeline_layout,
                 pipeline,
                 framebuffers,
+                vertex_buffer,
+                vertex_buffer_allocation,
                 command_pool,
                 frame_data,
                 current_frame: 0,
@@ -169,10 +237,18 @@ impl VulkanData {
             &render_pass_info,
             vk::SubpassContents::INLINE,
         );
+
         self.device.cmd_bind_pipeline(
             frame.command_buffer,
             vk::PipelineBindPoint::GRAPHICS,
             self.pipeline,
+        );
+
+        self.device.cmd_bind_vertex_buffers(
+            frame.command_buffer, 
+            0, 
+            &[self.vertex_buffer], 
+            &[0]
         );
 
         let viewport = vk::Viewport {
@@ -469,6 +545,18 @@ unsafe fn get_device_and_queue(
     (pdevice, device, queue_family_index, queue)
 }
 
+unsafe fn get_allocator(instance: &Instance, device: &Device, pdevice: &vk::PhysicalDevice) -> RefCell<vma::Allocator> {
+    let allocator_create_info = vma::AllocatorCreateDesc {
+        physical_device: *pdevice,
+        device: device.clone(),
+        instance: instance.clone(),
+        debug_settings: Default::default(),
+        buffer_device_address: true,
+    };
+
+    RefCell::new(vma::Allocator::new(&allocator_create_info).unwrap())
+}
+
 unsafe fn get_surface_properties(
     surface_loader: &Surface,
     surface: &vk::SurfaceKHR,
@@ -600,7 +688,7 @@ fn get_shader_code(name: impl AsRef<str>) -> Vec<u32> {
     read_spv(&mut file).unwrap()
 }
 
-unsafe fn get_triangle_render_pass(
+unsafe fn get_vertex_buffers_render_pass(
     device: &Device,
     surface_format: vk::SurfaceFormatKHR,
 ) -> vk::RenderPass {
@@ -643,12 +731,12 @@ unsafe fn get_triangle_render_pass(
     render_pass
 }
 
-unsafe fn get_triangle_pipeline(
+unsafe fn get_vertex_buffers_pipeline(
     device: &Device,
     render_pass: &vk::RenderPass,
 ) -> (Vec<vk::ShaderModule>, vk::PipelineLayout, vk::Pipeline) {
-    let vertex_shader_module = get_shader_module(device, "triangle.vert");
-    let fragment_shader_module = get_shader_module(device, "triangle.frag");
+    let vertex_shader_module = get_shader_module(device, "vertex_buffers.vert");
+    let fragment_shader_module = get_shader_module(device, "vertex_buffers.frag");
 
     let vertex_stage_create_info = vk::PipelineShaderStageCreateInfo::builder()
         .stage(vk::ShaderStageFlags::VERTEX)
@@ -666,9 +754,12 @@ unsafe fn get_triangle_pipeline(
     let dynamic_state =
         vk::PipelineDynamicStateCreateInfo::builder().dynamic_states(&dynamic_states);
 
+    let binding_descriptions = [Vertex::get_binding_description()];
+    let attribute_descriptions = Vertex::get_attribute_descriptions();
+
     let vertex_input_state = vk::PipelineVertexInputStateCreateInfo::builder()
-        .vertex_binding_descriptions(&[])
-        .vertex_attribute_descriptions(&[]);
+        .vertex_binding_descriptions(&binding_descriptions)
+        .vertex_attribute_descriptions(&attribute_descriptions[..]);
 
     let input_assembly_state = vk::PipelineInputAssemblyStateCreateInfo::builder()
         .topology(vk::PrimitiveTopology::TRIANGLE_LIST)
@@ -752,6 +843,35 @@ unsafe fn get_framebuffers(
                 .unwrap()
         })
         .collect()
+}
+
+unsafe fn get_vertex_buffer(device: &Device, allocator: &mut vma::Allocator, vertices: &[Vertex]) -> (vk::Buffer, vma::Allocation) {
+    let buffer_create_info = vk::BufferCreateInfo::builder()
+        .size(std::mem::size_of_val(vertices) as u64)
+        .usage(vk::BufferUsageFlags::VERTEX_BUFFER)
+        .sharing_mode(vk::SharingMode::EXCLUSIVE);
+
+    let buffer = device.create_buffer(&buffer_create_info, None).unwrap();
+    let requirements = device.get_buffer_memory_requirements(buffer);
+
+    let allocation_create_info = vma::AllocationCreateDesc {
+        name: "Vertex Buffer",
+        requirements,
+        location: gpu_allocator::MemoryLocation::CpuToGpu,
+        linear: true,
+        allocation_scheme: vma::AllocationScheme::GpuAllocatorManaged,
+    };
+
+    let allocation = allocator.allocate(&allocation_create_info).unwrap();
+
+    let vertices_ptr = device.map_memory(allocation.memory(), 0, requirements.size, vk::MemoryMapFlags::empty()).unwrap();
+    let mut vertices_aligned = Align::new(vertices_ptr, std::mem::align_of::<Vertex>() as u64, requirements.size);
+    vertices_aligned.copy_from_slice(vertices);
+    device.unmap_memory(allocation.memory());
+
+
+    device.bind_buffer_memory(buffer, allocation.memory(), allocation.offset()).unwrap();
+    (buffer, allocation)
 }
 
 unsafe fn get_command_buffers(

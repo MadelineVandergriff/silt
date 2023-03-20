@@ -1,6 +1,6 @@
-use silt::triangle;
+use silt::vertex_buffers;
 
 fn main() {
-    let triangle = triangle::VulkanData::new();
-    triangle.run();
+    let triangle2 = vertex_buffers::VulkanData::new();
+    triangle2.run();
 }
