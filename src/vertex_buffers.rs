@@ -65,6 +65,9 @@ pub struct FrameData {
 }
 
 pub struct VulkanData {
+    pub vertices: Vec<Vertex>,
+    pub indices: Vec<u16>,
+
     pub window: Window,
     pub event_loop: Option<EventLoop<()>>,
 
@@ -103,7 +106,9 @@ pub struct VulkanData {
     pub framebuffers: Vec<vk::Framebuffer>,
 
     pub vertex_buffer: vk::Buffer,
-    pub vertex_buffer_allocation: Option<vma::Allocation>,
+    pub vertex_buffer_allocation: vma::Allocation,
+    pub index_buffer: vk::Buffer,
+    pub index_buffer_allocation: vma::Allocation,
 
     pub command_pool: vk::CommandPool,
     pub transient_command_pool: vk::CommandPool,
@@ -119,20 +124,27 @@ impl VulkanData {
             let frames_in_flight: u32 = 2;
             let (width, height) = (640, 480);
 
-            let vertices = [
+            let vertices = vec![
                 Vertex {
-                    pos: glm::vec2(0., -0.5),
+                    pos: glm::vec2(-0.5, -0.5),
                     color: glm::vec3(1., 0., 0.),
                 },
                 Vertex {
-                    pos: glm::vec2(0.5, 0.5),
+                    pos: glm::vec2(0.5, -0.5),
                     color: glm::vec3(0., 1., 0.),
                 },
                 Vertex {
-                    pos: glm::vec2(-0.5, 0.5),
+                    pos: glm::vec2(0.5, 0.5),
                     color: glm::vec3(0., 0., 1.),
                 },
+                Vertex {
+                    pos: glm::vec2(-0.5, 0.5),
+                    color: glm::vec3(1., 1., 1.),
+                },
             ];
+
+            let indices = vec![0, 1, 2, 2, 3, 0];
+
             let (window, event_loop) = get_window(width, height);
             let (entry, instance) = get_instance(&window);
             let (debug_utils_loader, debug_callback) = get_debug_hooks(&entry, &instance);
@@ -167,6 +179,13 @@ impl VulkanData {
                 &mut allocator.borrow_mut(),
                 &vertices,
             );
+            let (index_buffer, index_buffer_allocation) = get_index_buffer(
+                &device,
+                &queue,
+                &transient_command_pool,
+                &mut allocator.borrow_mut(),
+                &indices,
+            );
             let sync_objects = get_semaphores(&device, frames_in_flight);
 
             let frame_data = command_buffers
@@ -183,6 +202,8 @@ impl VulkanData {
                 .collect();
 
             Self {
+                vertices,
+                indices,
                 window,
                 event_loop: Some(event_loop),
                 entry,
@@ -210,7 +231,9 @@ impl VulkanData {
                 pipeline,
                 framebuffers,
                 vertex_buffer,
-                vertex_buffer_allocation: Some(vertex_buffer_allocation),
+                vertex_buffer_allocation,
+                index_buffer,
+                index_buffer_allocation,
                 command_pool,
                 transient_command_pool,
                 frame_data,
@@ -254,6 +277,8 @@ impl VulkanData {
 
         self.device
             .cmd_bind_vertex_buffers(frame.command_buffer, 0, &[self.vertex_buffer], &[0]);
+        self.device
+            .cmd_bind_index_buffer(frame.command_buffer, self.index_buffer, 0, vk::IndexType::UINT16);
 
         let viewport = vk::Viewport {
             x: 0.,
@@ -273,7 +298,7 @@ impl VulkanData {
         self.device
             .cmd_set_scissor(frame.command_buffer, 0, std::slice::from_ref(&scissor));
 
-        self.device.cmd_draw(frame.command_buffer, 3, 1, 0, 0);
+        self.device.cmd_draw_indexed(frame.command_buffer, self.indices.len() as u32, 1, 0, 0, 0);
         self.device.cmd_end_render_pass(frame.command_buffer);
         self.device
             .end_command_buffer(frame.command_buffer)
@@ -999,6 +1024,45 @@ unsafe fn get_vertex_buffer(
     );
 
     map_to_buffer(device, &src_allocation, src_requirements, vertices);
+    copy_buffer(
+        device,
+        queue,
+        command_pool,
+        src_buffer,
+        buffer,
+        requirements.size,
+    );
+
+    device.destroy_buffer(src_buffer, None);
+    allocator.free(src_allocation).unwrap();
+
+    (buffer, allocation)
+}
+
+unsafe fn get_index_buffer(
+    device: &Device,
+    queue: &vk::Queue,
+    command_pool: &vk::CommandPool,
+    allocator: &mut vma::Allocator,
+    indices: &[u16],
+) -> (vk::Buffer, vma::Allocation) {
+    let (src_buffer, src_allocation, src_requirements) = create_buffer(
+        device,
+        allocator,
+        std::mem::size_of_val(indices) as u64,
+        vk::BufferUsageFlags::TRANSFER_SRC,
+        gpu_allocator::MemoryLocation::CpuToGpu,
+    );
+
+    let (buffer, allocation, requirements) = create_buffer(
+        device,
+        allocator,
+        std::mem::size_of_val(indices) as u64,
+        vk::BufferUsageFlags::INDEX_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
+        gpu_allocator::MemoryLocation::GpuOnly,
+    );
+
+    map_to_buffer(device, &src_allocation, src_requirements, indices);
     copy_buffer(
         device,
         queue,
