@@ -6,6 +6,7 @@ use ash::{Device, Entry, Instance};
 use gpu_allocator::vulkan as vma;
 use itertools::Itertools;
 use memoffset::offset_of;
+use nalgebra_glm as glm;
 use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
 use std::borrow::Cow;
 use std::cell::RefCell;
@@ -15,7 +16,6 @@ use std::{fs, path::Path};
 use winit::event::{Event, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
 use winit::window::{Window, WindowBuilder};
-use nalgebra_glm as glm;
 
 pub type QueueFamilyIndex = u32;
 
@@ -52,7 +52,7 @@ impl Bindable for Vertex {
                 .location(1)
                 .format(vk::Format::R32G32B32_SFLOAT)
                 .offset(offset_of!(Vertex, color) as u32)
-                .build()
+                .build(),
         ]
     }
 }
@@ -101,11 +101,12 @@ pub struct VulkanData {
     pub pipeline: vk::Pipeline,
 
     pub framebuffers: Vec<vk::Framebuffer>,
-    
+
     pub vertex_buffer: vk::Buffer,
-    pub vertex_buffer_allocation: vma::Allocation,
+    pub vertex_buffer_allocation: Option<vma::Allocation>,
 
     pub command_pool: vk::CommandPool,
+    pub transient_command_pool: vk::CommandPool,
 
     pub frame_data: Vec<FrameData>,
     pub current_frame: usize,
@@ -130,7 +131,7 @@ impl VulkanData {
                 Vertex {
                     pos: glm::vec2(-0.5, 0.5),
                     color: glm::vec3(0., 0., 1.),
-                }
+                },
             ];
             let (window, event_loop) = get_window(width, height);
             let (entry, instance) = get_instance(&window);
@@ -157,9 +158,15 @@ impl VulkanData {
             let (shader_modules, pipeline_layout, pipeline) =
                 get_vertex_buffers_pipeline(&device, &render_pass);
             let framebuffers = get_framebuffers(&device, &image_views, image_extent, &render_pass);
-            let (vertex_buffer, vertex_buffer_allocation) = get_vertex_buffer(&device, &mut allocator.borrow_mut(), &vertices);
-            let (command_pool, command_buffers) =
+            let (command_pool, transient_command_pool, command_buffers) =
                 get_command_buffers(&device, queue_family_index, frames_in_flight);
+            let (vertex_buffer, vertex_buffer_allocation) = get_vertex_buffer(
+                &device,
+                &queue,
+                &transient_command_pool,
+                &mut allocator.borrow_mut(),
+                &vertices,
+            );
             let sync_objects = get_semaphores(&device, frames_in_flight);
 
             let frame_data = command_buffers
@@ -203,8 +210,9 @@ impl VulkanData {
                 pipeline,
                 framebuffers,
                 vertex_buffer,
-                vertex_buffer_allocation,
+                vertex_buffer_allocation: Some(vertex_buffer_allocation),
                 command_pool,
+                transient_command_pool,
                 frame_data,
                 current_frame: 0,
             }
@@ -244,12 +252,8 @@ impl VulkanData {
             self.pipeline,
         );
 
-        self.device.cmd_bind_vertex_buffers(
-            frame.command_buffer, 
-            0, 
-            &[self.vertex_buffer], 
-            &[0]
-        );
+        self.device
+            .cmd_bind_vertex_buffers(frame.command_buffer, 0, &[self.vertex_buffer], &[0]);
 
         let viewport = vk::Viewport {
             x: 0.,
@@ -325,7 +329,8 @@ impl VulkanData {
             .wait_semaphores(std::slice::from_ref(&frame.render_finished))
             .swapchains(std::slice::from_ref(self.swapchain.as_ref().unwrap()))
             .image_indices(std::slice::from_ref(&image_index));
-        let swapchain_suboptimal = self.swapchain_loader
+        let swapchain_suboptimal = self
+            .swapchain_loader
             .as_ref()
             .unwrap()
             .queue_present(self.queue, &present_info)
@@ -368,12 +373,16 @@ impl VulkanData {
         self.framebuffers.clear();
         self.image_views.clear();
         self.images.clear();
-        self.swapchain_loader.as_ref().unwrap().destroy_swapchain(self.swapchain.unwrap(), None);
+        self.swapchain_loader
+            .as_ref()
+            .unwrap()
+            .destroy_swapchain(self.swapchain.unwrap(), None);
         self.swapchain = None;
         self.swapchain_loader = None;
 
         loop {
-            self.surface_capabilities = get_surface_properties(&self.surface_loader, &self.surface, &self.pdevice).0;
+            self.surface_capabilities =
+                get_surface_properties(&self.surface_loader, &self.surface, &self.pdevice).0;
             if self.surface_capabilities.current_extent.width != 0 {
                 break;
             }
@@ -390,8 +399,14 @@ impl VulkanData {
             self.present_mode,
         );
 
-        let (images, image_views) = get_image_views(&self.device, &swapchain_loader, &swapchain, self.surface_format);
-        let framebuffers = get_framebuffers(&self.device, &image_views, image_extent, &self.render_pass);
+        let (images, image_views) = get_image_views(
+            &self.device,
+            &swapchain_loader,
+            &swapchain,
+            self.surface_format,
+        );
+        let framebuffers =
+            get_framebuffers(&self.device, &image_views, image_extent, &self.render_pass);
 
         self.swapchain_loader = Some(swapchain_loader);
         self.swapchain = Some(swapchain);
@@ -401,6 +416,26 @@ impl VulkanData {
         self.framebuffers = framebuffers;
     }
 }
+
+impl Drop for VulkanData {
+    fn drop(&mut self) {
+        unsafe {
+            self.device.queue_wait_idle(self.queue).unwrap();
+            self.device
+                .wait_for_fences(
+                    &self
+                        .frame_data
+                        .iter()
+                        .map(|d| d.in_flight)
+                        .collect::<Vec<_>>()[..],
+                    true,
+                    u64::MAX,
+                )
+                .unwrap();
+        };
+    }
+}
+
 unsafe fn get_window(width: u32, height: u32) -> (Window, EventLoop<()>) {
     let event_loop = EventLoop::new();
 
@@ -545,7 +580,11 @@ unsafe fn get_device_and_queue(
     (pdevice, device, queue_family_index, queue)
 }
 
-unsafe fn get_allocator(instance: &Instance, device: &Device, pdevice: &vk::PhysicalDevice) -> RefCell<vma::Allocator> {
+unsafe fn get_allocator(
+    instance: &Instance,
+    device: &Device,
+    pdevice: &vk::PhysicalDevice,
+) -> RefCell<vma::Allocator> {
     let allocator_create_info = vma::AllocatorCreateDesc {
         physical_device: *pdevice,
         device: device.clone(),
@@ -845,32 +884,133 @@ unsafe fn get_framebuffers(
         .collect()
 }
 
-unsafe fn get_vertex_buffer(device: &Device, allocator: &mut vma::Allocator, vertices: &[Vertex]) -> (vk::Buffer, vma::Allocation) {
+unsafe fn create_buffer(
+    device: &Device,
+    allocator: &mut vma::Allocator,
+    size: u64,
+    usage: vk::BufferUsageFlags,
+    location: gpu_allocator::MemoryLocation,
+) -> (vk::Buffer, vma::Allocation, vk::MemoryRequirements) {
     let buffer_create_info = vk::BufferCreateInfo::builder()
-        .size(std::mem::size_of_val(vertices) as u64)
-        .usage(vk::BufferUsageFlags::VERTEX_BUFFER)
+        .size(size)
+        .usage(usage)
         .sharing_mode(vk::SharingMode::EXCLUSIVE);
 
     let buffer = device.create_buffer(&buffer_create_info, None).unwrap();
     let requirements = device.get_buffer_memory_requirements(buffer);
 
     let allocation_create_info = vma::AllocationCreateDesc {
-        name: "Vertex Buffer",
+        name: "UNNAMED BUFFER",
         requirements,
-        location: gpu_allocator::MemoryLocation::CpuToGpu,
+        location,
         linear: true,
-        allocation_scheme: vma::AllocationScheme::GpuAllocatorManaged,
+        allocation_scheme: vma::AllocationScheme::DedicatedBuffer(buffer),
     };
 
     let allocation = allocator.allocate(&allocation_create_info).unwrap();
+    device
+        .bind_buffer_memory(buffer, allocation.memory(), allocation.offset())
+        .unwrap();
+    (buffer, allocation, requirements)
+}
 
-    let vertices_ptr = device.map_memory(allocation.memory(), 0, requirements.size, vk::MemoryMapFlags::empty()).unwrap();
-    let mut vertices_aligned = Align::new(vertices_ptr, std::mem::align_of::<Vertex>() as u64, requirements.size);
-    vertices_aligned.copy_from_slice(vertices);
+unsafe fn copy_buffer(
+    device: &Device,
+    queue: &vk::Queue,
+    command_pool: &vk::CommandPool,
+    src: vk::Buffer,
+    dst: vk::Buffer,
+    size: u64,
+) {
+    let command_buffer_create_info = vk::CommandBufferAllocateInfo::builder()
+        .level(vk::CommandBufferLevel::PRIMARY)
+        .command_pool(*command_pool)
+        .command_buffer_count(1);
+
+    let command_buffer = device
+        .allocate_command_buffers(&command_buffer_create_info)
+        .unwrap()[0];
+
+    let begin_info =
+        vk::CommandBufferBeginInfo::builder().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
+    device
+        .begin_command_buffer(command_buffer, &begin_info)
+        .unwrap();
+
+    let region = vk::BufferCopy::builder().size(size).build();
+    device.cmd_copy_buffer(command_buffer, src, dst, &[region]);
+    device.end_command_buffer(command_buffer).unwrap();
+
+    let submit_info =
+        vk::SubmitInfo::builder().command_buffers(std::slice::from_ref(&command_buffer));
+
+    device
+        .queue_submit(
+            *queue,
+            std::slice::from_ref(&submit_info),
+            vk::Fence::null(),
+        )
+        .unwrap();
+    device.queue_wait_idle(*queue).unwrap();
+    device.free_command_buffers(*command_pool, &[command_buffer]);
+}
+
+unsafe fn map_to_buffer<T: Copy>(
+    device: &Device,
+    allocation: &vma::Allocation,
+    requirements: vk::MemoryRequirements,
+    slice: &[T],
+) {
+    let ptr = device
+        .map_memory(
+            allocation.memory(),
+            0,
+            requirements.size,
+            vk::MemoryMapFlags::empty(),
+        )
+        .unwrap();
+
+    let mut align = Align::new(ptr, std::mem::align_of::<T>() as u64, requirements.size);
+    align.copy_from_slice(slice);
     device.unmap_memory(allocation.memory());
+}
 
+unsafe fn get_vertex_buffer(
+    device: &Device,
+    queue: &vk::Queue,
+    command_pool: &vk::CommandPool,
+    allocator: &mut vma::Allocator,
+    vertices: &[Vertex],
+) -> (vk::Buffer, vma::Allocation) {
+    let (src_buffer, src_allocation, src_requirements) = create_buffer(
+        device,
+        allocator,
+        std::mem::size_of_val(vertices) as u64,
+        vk::BufferUsageFlags::TRANSFER_SRC,
+        gpu_allocator::MemoryLocation::CpuToGpu,
+    );
 
-    device.bind_buffer_memory(buffer, allocation.memory(), allocation.offset()).unwrap();
+    let (buffer, allocation, requirements) = create_buffer(
+        device,
+        allocator,
+        std::mem::size_of_val(vertices) as u64,
+        vk::BufferUsageFlags::VERTEX_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
+        gpu_allocator::MemoryLocation::GpuOnly,
+    );
+
+    map_to_buffer(device, &src_allocation, src_requirements, vertices);
+    copy_buffer(
+        device,
+        queue,
+        command_pool,
+        src_buffer,
+        buffer,
+        requirements.size,
+    );
+
+    device.destroy_buffer(src_buffer, None);
+    allocator.free(src_allocation).unwrap();
+
     (buffer, allocation)
 }
 
@@ -878,13 +1018,21 @@ unsafe fn get_command_buffers(
     device: &Device,
     queue_family_index: QueueFamilyIndex,
     frames_in_flight: u32,
-) -> (vk::CommandPool, Vec<vk::CommandBuffer>) {
+) -> (vk::CommandPool, vk::CommandPool, Vec<vk::CommandBuffer>) {
     let command_pool_create_info = vk::CommandPoolCreateInfo::builder()
         .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER)
         .queue_family_index(queue_family_index);
 
     let command_pool = device
         .create_command_pool(&command_pool_create_info, None)
+        .unwrap();
+
+    let transient_command_pool_create_info = vk::CommandPoolCreateInfo::builder()
+        .flags(vk::CommandPoolCreateFlags::TRANSIENT)
+        .queue_family_index(queue_family_index);
+
+    let transient_command_pool = device
+        .create_command_pool(&transient_command_pool_create_info, None)
         .unwrap();
 
     let command_buffer_alloc_info = vk::CommandBufferAllocateInfo::builder()
@@ -896,7 +1044,7 @@ unsafe fn get_command_buffers(
         .allocate_command_buffers(&command_buffer_alloc_info)
         .unwrap();
 
-    (command_pool, command_buffers)
+    (command_pool, transient_command_pool, command_buffers)
 }
 
 unsafe fn get_semaphores(
