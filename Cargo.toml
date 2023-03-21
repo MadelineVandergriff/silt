@@ -12,6 +12,7 @@ gpu-allocator = "0.22.0"
 itertools = "0.10.5"
 memoffset = "0.8.0"
 nalgebra-glm = "0.18.0"
+once_cell = "1.17.1"
 raw-window-handle = "0.5.1"
 winit = "0.28.2"
 
