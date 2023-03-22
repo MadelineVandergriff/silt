@@ -1,6 +1,6 @@
-use silt::uniform_buffers;
+use silt::texture_mapping;
 
 fn main() {
-    let triangle2 = uniform_buffers::VulkanData::new();
-    triangle2.run();
+    let triangle3 = texture_mapping::VulkanData::new();
+    triangle3.run();
 }
