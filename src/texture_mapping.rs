@@ -19,6 +19,11 @@ use winit::event::{Event, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
 use winit::window::{Window, WindowBuilder};
 
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+use ash::vk::{
+    KhrGetPhysicalDeviceProperties2Fn, KhrPortabilityEnumerationFn, KhrPortabilitySubsetFn,
+};
+
 static START_TIME: Lazy<Instant> = Lazy::new(|| Instant::now());
 
 pub type QueueFamilyIndex = u32;
@@ -441,7 +446,6 @@ impl VulkanData {
         self.device
             .wait_for_fences(&[frame.in_flight], true, u64::MAX)
             .unwrap();
-        self.device.reset_fences(&[frame.in_flight]).unwrap();
 
         let (image_index, swapchain_suboptimal) = self
             .swapchain_loader
@@ -460,6 +464,8 @@ impl VulkanData {
             self.recreate_swapchain();
             return;
         }
+
+        self.device.reset_fences(&[frame.in_flight]).unwrap();
 
         self.device
             .reset_command_buffer(frame.command_buffer, vk::CommandBufferResetFlags::empty())
@@ -529,6 +535,9 @@ impl VulkanData {
                     ..
                 } => *control_flow = ControlFlow::Exit,
                 Event::MainEventsCleared => unsafe {
+                    if self.window.is_minimized().unwrap_or_default() {
+                        std::thread::sleep(Duration::from_millis(100));
+                    }
                     self.current_frame = (self.current_frame + 1) % self.frame_data.len();
                     let new_time = Instant::now();
                     let diff = new_time - old_time;
@@ -548,7 +557,6 @@ impl VulkanData {
     pub unsafe fn recreate_swapchain(&mut self) {
         self.device.device_wait_idle().unwrap();
 
-        let size = self.window.inner_size();
         self.framebuffers.clear();
         self.image_views.clear();
         self.images.clear();
@@ -559,14 +567,15 @@ impl VulkanData {
         self.swapchain = None;
         self.swapchain_loader = None;
 
-        loop {
-            self.surface_capabilities =
-                get_surface_properties(&self.surface_loader, &self.surface, &self.pdevice).0;
-            if self.surface_capabilities.current_extent.width != 0 {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(500));
+        while self.window.is_minimized().unwrap_or(false) {
+            println!("Waiting for window visibility");
+            std::thread::sleep(std::time::Duration::from_millis(50));
         }
+
+        let size = self.window.inner_size();
+        self.surface_capabilities =
+            get_surface_properties(&self.surface_loader, &self.surface, &self.pdevice).0;
+
         let (swapchain_loader, swapchain, image_extent) = get_swapchain(
             size.width,
             size.height,
@@ -616,11 +625,16 @@ impl Drop for VulkanData {
 }
 
 unsafe fn get_window(width: u32, height: u32) -> (Window, EventLoop<()>) {
+    let icon = image::open("src/textures/icon.png").unwrap().into_rgba8();
+    let (icon_width, icon_height) = icon.dimensions();
+    let window_icon = winit::window::Icon::from_rgba(icon.into_raw(), icon_width, icon_height).unwrap();
+
     let event_loop = EventLoop::new();
 
     let window = WindowBuilder::new()
         .with_title("Silt Triangle")
         .with_inner_size(winit::dpi::LogicalSize::new(width, height))
+        .with_window_icon(Some(window_icon))
         .build(&event_loop)
         .unwrap();
 
@@ -632,10 +646,18 @@ unsafe fn get_instance(window: &Window) -> (Entry, Instance) {
 
     let layer_names =
         vec![CStr::from_bytes_with_nul_unchecked(b"VK_LAYER_KHRONOS_validation\0").as_ptr()];
+    
+    let mut portability_extensions: Vec<*const i8> = vec![];
+    #[cfg(any(target_os = "macos", target_os = "ios"))] {
+        portability_extensions.push(KhrPortabilityEnumerationFn::name().as_ptr());
+        portability_extensions.push(KhrGetPhysicalDeviceProperties2Fn::name().as_ptr());
+    }
+
     let extension_names = ash_window::enumerate_required_extensions(window.raw_display_handle())
         .unwrap()
         .iter()
         .chain(std::iter::once(&DebugUtils::name().as_ptr()))
+        .chain(&portability_extensions)
         .map(|ptr| *ptr)
         .collect::<Vec<_>>();
 
@@ -646,7 +668,14 @@ unsafe fn get_instance(window: &Window) -> (Entry, Instance) {
         .engine_version(vk::make_api_version(0, 0, 1, 0))
         .api_version(vk::make_api_version(0, 1, 2, 0));
 
+    let instance_flags = if cfg!(any(target_os = "macos", target_os = "ios")) {
+        vk::InstanceCreateFlags::ENUMERATE_PORTABILITY_KHR
+    } else {
+        vk::InstanceCreateFlags::empty()
+    };
+
     let instance_create_info = vk::InstanceCreateInfo::builder()
+        .flags(instance_flags)
         .application_info(&app_info)
         .enabled_layer_names(&layer_names)
         .enabled_extension_names(&extension_names);
@@ -741,7 +770,12 @@ unsafe fn get_device_and_queue(
         .next()
         .expect("Couldn't find suitable device.");
 
-    let device_extensions_raw = [Swapchain::name().as_ptr()];
+    let device_extensions_raw = [
+        Swapchain::name().as_ptr(),
+        #[cfg(any(target_os = "macos", target_os = "ios"))]
+        KhrPortabilitySubsetFn::name().as_ptr(),
+    ];
+
     let device_features = vk::PhysicalDeviceFeatures::builder()
         .sampler_anisotropy(true);
 
