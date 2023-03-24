@@ -93,7 +93,7 @@ pub struct FrameData {
 
 pub struct VulkanData {
     pub vertices: Vec<Vertex>,
-    pub indices: Vec<u16>,
+    pub indices: Vec<u32>,
 
     pub window: Window,
     pub event_loop: Option<EventLoop<()>>,
@@ -242,6 +242,8 @@ impl VulkanData {
                 .flat_map(|face| [0, 1, 2, 2, 3, 0].map(|idx| idx + face * 4))
                 .collect::<Vec<_>>();
 
+            let (vertices, indices) = load_model();
+
             let (window, event_loop) = get_window(width, height);
             let (entry, instance) = get_instance(&window);
             let (debug_utils_loader, debug_callback) = get_debug_hooks(&entry, &instance);
@@ -273,7 +275,13 @@ impl VulkanData {
             let render_pass = get_render_pass(&device, surface_format, depth_format);
             let (shader_modules, descriptor_set_layout, pipeline_layout, pipeline) =
                 get_pipeline(&device, &render_pass);
-            let framebuffers = get_framebuffers(&device, &image_views, image_extent, &depth_view, &render_pass);
+            let framebuffers = get_framebuffers(
+                &device,
+                &image_views,
+                image_extent,
+                &depth_view,
+                &render_pass,
+            );
             let (command_pool, transient_command_pool, command_buffers) =
                 get_command_buffers(&device, queue_family_index, frames_in_flight);
             let (vertex_buffer, vertex_buffer_allocation) = get_vertex_buffer(
@@ -402,7 +410,7 @@ impl VulkanData {
             depth_stencil: vk::ClearDepthStencilValue {
                 depth: 1.,
                 stencil: 0,
-            }
+            },
         };
 
         let clear_values = [color_attachment_clear, depth_attachment_clear];
@@ -433,7 +441,7 @@ impl VulkanData {
             frame.command_buffer,
             self.index_buffer,
             0,
-            vk::IndexType::UINT16,
+            vk::IndexType::UINT32,
         );
 
         let viewport = vk::Viewport {
@@ -511,7 +519,7 @@ impl VulkanData {
         let ubo = UniformBufferObject {
             model: glm::rotation(time, &glm::vec3(0., 0., 1.)),
             view: glm::look_at(
-                &glm::vec3(3., 3., 3.),
+                &glm::vec3(1.5, 1.5, 1.5),
                 &glm::vec3(0., 0., 0.),
                 &glm::vec3(0., 0., 1.),
             ),
@@ -603,7 +611,10 @@ impl VulkanData {
         self.swapchain_loader = None;
         self.device.destroy_image_view(self.depth_view, None);
         self.device.destroy_image(self.depth_image, None);
-        self.allocator.borrow_mut().free(self.depth_allocation.take().unwrap()).unwrap();
+        self.allocator
+            .borrow_mut()
+            .free(self.depth_allocation.take().unwrap())
+            .unwrap();
 
         while self.window.is_minimized().unwrap_or(false) {
             println!("Waiting for window visibility");
@@ -632,10 +643,21 @@ impl VulkanData {
             self.surface_format,
         );
 
-        let (depth_image, depth_allocation, depth_view, _) = get_depth_resources(&self.instance, &self.device, &self.pdevice, &mut self.allocator.borrow_mut(), image_extent);
+        let (depth_image, depth_allocation, depth_view, _) = get_depth_resources(
+            &self.instance,
+            &self.device,
+            &self.pdevice,
+            &mut self.allocator.borrow_mut(),
+            image_extent,
+        );
 
-        let framebuffers =
-            get_framebuffers(&self.device, &image_views, image_extent, &depth_view, &self.render_pass);
+        let framebuffers = get_framebuffers(
+            &self.device,
+            &image_views,
+            image_extent,
+            &depth_view,
+            &self.render_pass,
+        );
 
         self.swapchain_loader = Some(swapchain_loader);
         self.swapchain = Some(swapchain);
@@ -666,6 +688,30 @@ impl Drop for VulkanData {
                 .unwrap();
         };
     }
+}
+
+fn load_model() -> (Vec<Vertex>, Vec<u32>) {
+    let (models, _) =
+        tobj::load_obj("src/models/viking_room.obj", &tobj::GPU_LOAD_OPTIONS).unwrap();
+    let mesh = &models[0].mesh;
+
+    let vertices = std::iter::zip(
+        mesh.positions.chunks_exact(3),
+        mesh.texcoords.chunks_exact(2),
+    )
+    .map(|(pos, uv)| Vertex {
+        pos: glm::vec3(pos[0], pos[1], pos[2]),
+        color: glm::zero(),
+        tex_coord: glm::vec2(uv[0], 1. - uv[1]),
+    })
+    .collect::<Vec<_>>();
+
+    let indices = mesh.indices.clone();
+
+    println!("Vertex count: [{}]", vertices.len());
+    println!("Index count: [{}]", indices.len());
+
+    (vertices, indices)
 }
 
 unsafe fn get_window(width: u32, height: u32) -> (Window, EventLoop<()>) {
@@ -883,10 +929,11 @@ unsafe fn get_surface_properties(
     let surface_capabilities = surface_loader
         .get_physical_device_surface_capabilities(*pdevice, *surface)
         .unwrap();
-    let surface_format = *surface_loader
+    let surface_format = surface_loader
         .get_physical_device_surface_formats(*pdevice, *surface)
         .unwrap()
-        .get(0)
+        .into_iter()
+        .find_or_first(|&format| format.format == vk::Format::B8G8R8A8_SRGB)
         .unwrap();
     let present_mode = surface_loader
         .get_physical_device_surface_present_modes(*pdevice, *surface)
@@ -1020,7 +1067,11 @@ fn get_shader_code(name: impl AsRef<str>) -> Vec<u32> {
     read_spv(&mut file).unwrap()
 }
 
-unsafe fn get_render_pass(device: &Device, surface_format: vk::SurfaceFormatKHR, depth_format: vk::Format) -> vk::RenderPass {
+unsafe fn get_render_pass(
+    device: &Device,
+    surface_format: vk::SurfaceFormatKHR,
+    depth_format: vk::Format,
+) -> vk::RenderPass {
     let color_attachment = vk::AttachmentDescription::builder()
         .format(surface_format.format)
         .samples(vk::SampleCountFlags::TYPE_1)
@@ -1050,7 +1101,7 @@ unsafe fn get_render_pass(device: &Device, surface_format: vk::SurfaceFormatKHR,
 
     let depth_attachment_reference = vk::AttachmentReference {
         attachment: 1,
-        layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL
+        layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
     };
 
     let subpass = vk::SubpassDescription::builder()
@@ -1061,10 +1112,19 @@ unsafe fn get_render_pass(device: &Device, surface_format: vk::SurfaceFormatKHR,
     let subpass_dependency = vk::SubpassDependency::builder()
         .src_subpass(vk::SUBPASS_EXTERNAL)
         .dst_subpass(0)
-        .src_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT | vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS)
+        .src_stage_mask(
+            vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT
+                | vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS,
+        )
         .src_access_mask(vk::AccessFlags::empty())
-        .dst_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT | vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS)
-        .dst_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE);
+        .dst_stage_mask(
+            vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT
+                | vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS,
+        )
+        .dst_access_mask(
+            vk::AccessFlags::COLOR_ATTACHMENT_WRITE
+                | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
+        );
 
     let render_pass_create_info = vk::RenderPassCreateInfo::builder()
         .attachments(&attachments)
@@ -1126,7 +1186,7 @@ unsafe fn get_pipeline(
         .rasterizer_discard_enable(false)
         .polygon_mode(vk::PolygonMode::FILL)
         .line_width(1.)
-        .cull_mode(vk::CullModeFlags::BACK)
+        .cull_mode(vk::CullModeFlags::NONE)
         .front_face(vk::FrontFace::COUNTER_CLOCKWISE)
         .depth_bias_enable(false);
 
@@ -1539,7 +1599,9 @@ unsafe fn get_texture(
     command_pool: &vk::CommandPool,
     allocator: &mut vma::Allocator,
 ) -> (vk::Image, vma::Allocation, vk::ImageView, vk::Sampler) {
-    let texture = image::open("src/textures/statue.jpg").unwrap().into_rgba8();
+    let texture = image::open("src/textures/viking_room.png")
+        .unwrap()
+        .into_rgba8();
     let samples = texture.as_flat_samples();
 
     let (width, height) = texture.dimensions();
@@ -1679,7 +1741,7 @@ unsafe fn get_index_buffer(
     queue: &vk::Queue,
     command_pool: &vk::CommandPool,
     allocator: &mut vma::Allocator,
-    indices: &[u16],
+    indices: &[u32],
 ) -> (vk::Buffer, vma::Allocation) {
     let (src_buffer, src_allocation, src_requirements) = create_buffer(
         device,
