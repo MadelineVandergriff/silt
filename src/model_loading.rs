@@ -12,7 +12,7 @@ use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::ffi::CStr;
-use std::time::{Instant, Duration};
+use std::time::{Duration, Instant};
 use std::{fs, path::Path};
 use winit::event::{Event, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
@@ -67,7 +67,7 @@ impl Bindable for Vertex {
                 .location(2)
                 .format(vk::Format::R32G32_SFLOAT)
                 .offset(offset_of!(Vertex, tex_coord) as u32)
-                .build()
+                .build(),
         ]
     }
 }
@@ -125,6 +125,10 @@ pub struct VulkanData {
     pub images: Vec<vk::Image>,
     pub image_views: Vec<vk::ImageView>,
 
+    pub depth_image: vk::Image,
+    pub depth_allocation: Option<vma::Allocation>,
+    pub depth_view: vk::ImageView,
+
     pub render_pass: vk::RenderPass,
     pub shader_modules: Vec<vk::ShaderModule>,
     pub pipeline_layout: vk::PipelineLayout,
@@ -161,70 +165,78 @@ impl VulkanData {
                 Vertex {
                     pos: glm::vec3(-1., -1., 1.),
                     color: glm::vec3(0., 0., 0.),
-                    tex_coord: glm::vec2(1., 0.)
+                    tex_coord: glm::vec2(1., 0.),
                 },
                 Vertex {
                     pos: glm::vec3(1., -1., 1.),
                     color: glm::vec3(0., 0., 0.),
-                    tex_coord: glm::vec2(0., 0.)
+                    tex_coord: glm::vec2(0., 0.),
                 },
                 Vertex {
                     pos: glm::vec3(1., 1., 1.),
                     color: glm::vec3(0., 0., 0.),
-                    tex_coord: glm::vec2(0., 1.)
+                    tex_coord: glm::vec2(0., 1.),
                 },
                 Vertex {
                     pos: glm::vec3(-1., 1., 1.),
                     color: glm::vec3(0., 0., 0.),
-                    tex_coord: glm::vec2(1., 1.)
+                    tex_coord: glm::vec2(1., 1.),
                 },
             ];
 
             let rotate_x = glm::rotation(glm::half_pi(), &glm::vec3::<f32>(1., 0., 0.));
             let rotate_y = glm::rotation(glm::half_pi(), &glm::vec3::<f32>(0., 1., 0.));
 
-            let right = top.iter().map(|vtx| {
-                Vertex {
+            let right = top
+                .iter()
+                .map(|vtx| Vertex {
                     pos: (rotate_x * glm::vec4(vtx.pos.x, vtx.pos.y, vtx.pos.z, 1.)).xyz(),
                     ..*vtx
-                }
-            }).collect::<Vec<_>>();
+                })
+                .collect::<Vec<_>>();
 
-            let bottom = right.iter().map(|vtx| {
-                Vertex {
+            let bottom = right
+                .iter()
+                .map(|vtx| Vertex {
                     pos: (rotate_x * glm::vec4(vtx.pos.x, vtx.pos.y, vtx.pos.z, 1.)).xyz(),
                     ..*vtx
-                }
-            }).collect::<Vec<_>>();
+                })
+                .collect::<Vec<_>>();
 
-            let left = bottom.iter().map(|vtx| {
-                Vertex {
+            let left = bottom
+                .iter()
+                .map(|vtx| Vertex {
                     pos: (rotate_x * glm::vec4(vtx.pos.x, vtx.pos.y, vtx.pos.z, 1.)).xyz(),
                     ..*vtx
-                }
-            }).collect::<Vec<_>>();
+                })
+                .collect::<Vec<_>>();
 
-            let back = top.iter().map(|vtx| {
-                Vertex {
+            let back = top
+                .iter()
+                .map(|vtx| Vertex {
                     pos: (rotate_y * glm::vec4(vtx.pos.x, vtx.pos.y, vtx.pos.z, 1.)).xyz(),
                     ..*vtx
-                }
-            }).collect::<Vec<_>>();
-
-            let front = back.iter().map(|vtx| {
-                Vertex {
-                    pos: (rotate_y * rotate_y * glm::vec4(vtx.pos.x, vtx.pos.y, vtx.pos.z, 1.)).xyz(),
-                    ..*vtx
-                }
-            }).collect::<Vec<_>>();
-
-            let vertices = top.into_iter()
-                .chain(right)
-                .chain(bottom)
-                .chain(left)
-                .chain(back)
-                .chain(front)
+                })
                 .collect::<Vec<_>>();
+
+            let front = back
+                .iter()
+                .map(|vtx| Vertex {
+                    pos: (rotate_y * rotate_y * glm::vec4(vtx.pos.x, vtx.pos.y, vtx.pos.z, 1.))
+                        .xyz(),
+                    ..*vtx
+                })
+                .collect::<Vec<_>>();
+
+            let top2 = top
+                .iter()
+                .map(|vtx| Vertex {
+                    pos: vtx.pos - glm::vec3(0., 0., 0.5),
+                    ..*vtx
+                })
+                .collect::<Vec<_>>();
+
+            let vertices = top.into_iter().chain(top2).collect::<Vec<_>>();
 
             let indices = (0..6)
                 .flat_map(|face| [0, 1, 2, 2, 3, 0].map(|idx| idx + face * 4))
@@ -251,10 +263,17 @@ impl VulkanData {
             );
             let (images, image_views) =
                 get_image_views(&device, &swapchain_loader, &swapchain, surface_format);
-            let render_pass = get_render_pass(&device, surface_format);
+            let (depth_image, depth_allocation, depth_view, depth_format) = get_depth_resources(
+                &instance,
+                &device,
+                &pdevice,
+                &mut allocator.borrow_mut(),
+                image_extent,
+            );
+            let render_pass = get_render_pass(&device, surface_format, depth_format);
             let (shader_modules, descriptor_set_layout, pipeline_layout, pipeline) =
                 get_pipeline(&device, &render_pass);
-            let framebuffers = get_framebuffers(&device, &image_views, image_extent, &render_pass);
+            let framebuffers = get_framebuffers(&device, &image_views, image_extent, &depth_view, &render_pass);
             let (command_pool, transient_command_pool, command_buffers) =
                 get_command_buffers(&device, queue_family_index, frames_in_flight);
             let (vertex_buffer, vertex_buffer_allocation) = get_vertex_buffer(
@@ -281,8 +300,13 @@ impl VulkanData {
                 &transient_command_pool,
                 &mut allocator.borrow_mut(),
             );
-            let (descriptor_pool, descriptor_sets) =
-                get_descriptor_sets(&device, &descriptor_set_layout, &texture_view, &texture_sampler, &uniform_buffers);
+            let (descriptor_pool, descriptor_sets) = get_descriptor_sets(
+                &device,
+                &descriptor_set_layout,
+                &texture_view,
+                &texture_sampler,
+                &uniform_buffers,
+            );
             let sync_objects = get_semaphores(&device, frames_in_flight);
 
             let frame_data = itertools::multizip((
@@ -336,6 +360,9 @@ impl VulkanData {
                 image_extent,
                 images,
                 image_views,
+                depth_image,
+                depth_allocation: Some(depth_allocation),
+                depth_view,
                 render_pass,
                 shader_modules,
                 pipeline_layout,
@@ -365,11 +392,20 @@ impl VulkanData {
             .begin_command_buffer(frame.command_buffer, &vk::CommandBufferBeginInfo::default())
             .unwrap();
 
-        let clear_color = vk::ClearValue {
+        let color_attachment_clear = vk::ClearValue {
             color: vk::ClearColorValue {
                 float32: [0., 0., 0., 0.],
             },
         };
+
+        let depth_attachment_clear = vk::ClearValue {
+            depth_stencil: vk::ClearDepthStencilValue {
+                depth: 1.,
+                stencil: 0,
+            }
+        };
+
+        let clear_values = [color_attachment_clear, depth_attachment_clear];
 
         let render_pass_info = vk::RenderPassBeginInfo::builder()
             .render_pass(self.render_pass)
@@ -378,7 +414,7 @@ impl VulkanData {
                 offset: vk::Offset2D { x: 0, y: 0 },
                 extent: self.image_extent,
             })
-            .clear_values(std::slice::from_ref(&clear_color));
+            .clear_values(&clear_values);
         self.device.cmd_begin_render_pass(
             frame.command_buffer,
             &render_pass_info,
@@ -480,7 +516,7 @@ impl VulkanData {
                 &glm::vec3(0., 0., 1.),
             ),
             projection: {
-                let mut gl_formatted = glm::perspective(self.aspect_ratio(), 1.5, 0.1, 10.);
+                let mut gl_formatted = glm::perspective_rh_zo(self.aspect_ratio(), 1.5, 0.1, 10.);
                 *gl_formatted.get_mut((1, 1)).unwrap() *= -1.;
                 gl_formatted
             },
@@ -565,6 +601,9 @@ impl VulkanData {
             .destroy_swapchain(self.swapchain.unwrap(), None);
         self.swapchain = None;
         self.swapchain_loader = None;
+        self.device.destroy_image_view(self.depth_view, None);
+        self.device.destroy_image(self.depth_image, None);
+        self.allocator.borrow_mut().free(self.depth_allocation.take().unwrap()).unwrap();
 
         while self.window.is_minimized().unwrap_or(false) {
             println!("Waiting for window visibility");
@@ -592,8 +631,11 @@ impl VulkanData {
             &swapchain,
             self.surface_format,
         );
+
+        let (depth_image, depth_allocation, depth_view, _) = get_depth_resources(&self.instance, &self.device, &self.pdevice, &mut self.allocator.borrow_mut(), image_extent);
+
         let framebuffers =
-            get_framebuffers(&self.device, &image_views, image_extent, &self.render_pass);
+            get_framebuffers(&self.device, &image_views, image_extent, &depth_view, &self.render_pass);
 
         self.swapchain_loader = Some(swapchain_loader);
         self.swapchain = Some(swapchain);
@@ -601,6 +643,9 @@ impl VulkanData {
         self.images = images;
         self.image_views = image_views;
         self.framebuffers = framebuffers;
+        self.depth_image = depth_image;
+        self.depth_allocation = Some(depth_allocation);
+        self.depth_view = depth_view;
     }
 }
 
@@ -626,7 +671,8 @@ impl Drop for VulkanData {
 unsafe fn get_window(width: u32, height: u32) -> (Window, EventLoop<()>) {
     let icon = image::open("src/textures/icon.png").unwrap().into_rgba8();
     let (icon_width, icon_height) = icon.dimensions();
-    let window_icon = winit::window::Icon::from_rgba(icon.into_raw(), icon_width, icon_height).unwrap();
+    let window_icon =
+        winit::window::Icon::from_rgba(icon.into_raw(), icon_width, icon_height).unwrap();
 
     let event_loop = EventLoop::new();
 
@@ -645,10 +691,11 @@ unsafe fn get_instance(window: &Window) -> (Entry, Instance) {
 
     let layer_names =
         vec![CStr::from_bytes_with_nul_unchecked(b"VK_LAYER_KHRONOS_validation\0").as_ptr()];
-    
+
     #[allow(unused_mut)]
     let mut portability_extensions: Vec<*const i8> = vec![];
-    #[cfg(any(target_os = "macos", target_os = "ios"))] {
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    {
         portability_extensions.push(KhrPortabilityEnumerationFn::name().as_ptr());
         portability_extensions.push(KhrGetPhysicalDeviceProperties2Fn::name().as_ptr());
     }
@@ -729,24 +776,35 @@ unsafe fn get_debug_hooks(
     (debug_utils_loader, debug_callback)
 }
 
-unsafe fn get_pdevice_suitability(instance: &Instance, surface_loader: &Surface, surface: &vk::SurfaceKHR, pdevice: &vk::PhysicalDevice) -> Option<(QueueFamilyIndex, i32)> {
+unsafe fn get_pdevice_suitability(
+    instance: &Instance,
+    surface_loader: &Surface,
+    surface: &vk::SurfaceKHR,
+    pdevice: &vk::PhysicalDevice,
+) -> Option<(QueueFamilyIndex, i32)> {
     let queue_family_props = instance.get_physical_device_queue_family_properties(*pdevice);
     let properties = instance.get_physical_device_properties(*pdevice);
     let features = instance.get_physical_device_features(*pdevice);
 
-    let queue_index = queue_family_props.into_iter().enumerate().find(|(idx, info)| {
-        info.queue_flags.contains(vk::QueueFlags::GRAPHICS)
-        && surface_loader.get_physical_device_surface_support(*pdevice, *idx as u32, *surface).unwrap_or(false)
-    })?.0 as u32;
+    let queue_index = queue_family_props
+        .into_iter()
+        .enumerate()
+        .find(|(idx, info)| {
+            info.queue_flags.contains(vk::QueueFlags::GRAPHICS)
+                && surface_loader
+                    .get_physical_device_surface_support(*pdevice, *idx as u32, *surface)
+                    .unwrap_or(false)
+        })?
+        .0 as u32;
 
     if features.sampler_anisotropy == vk::FALSE {
         return None;
     }
 
     let priority = match properties.device_type {
-                PhysicalDeviceType::DISCRETE_GPU => 0,
-                PhysicalDeviceType::INTEGRATED_GPU => 1,
-                _ => i32::MAX,
+        PhysicalDeviceType::DISCRETE_GPU => 0,
+        PhysicalDeviceType::INTEGRATED_GPU => 1,
+        _ => i32::MAX,
     };
 
     Some((queue_index, priority))
@@ -762,7 +820,8 @@ unsafe fn get_device_and_queue(
         .unwrap()
         .iter()
         .filter_map(|pdevice| {
-            let (queue_index, priority) = get_pdevice_suitability(instance, surface_loader, surface, pdevice)?;
+            let (queue_index, priority) =
+                get_pdevice_suitability(instance, surface_loader, surface, pdevice)?;
 
             Some((*pdevice, queue_index, priority))
         })
@@ -776,8 +835,7 @@ unsafe fn get_device_and_queue(
         KhrPortabilitySubsetFn::name().as_ptr(),
     ];
 
-    let device_features = vk::PhysicalDeviceFeatures::builder()
-        .sampler_anisotropy(true);
+    let device_features = vk::PhysicalDeviceFeatures::builder().sampler_anisotropy(true);
 
     let queue_priorities = [1.0];
     let queue_create_info = vk::DeviceQueueCreateInfo::builder()
@@ -838,6 +896,24 @@ unsafe fn get_surface_properties(
         .unwrap_or(vk::PresentModeKHR::FIFO);
 
     (surface_capabilities, surface_format, present_mode)
+}
+
+unsafe fn find_supported_format(
+    instance: &Instance,
+    pdevice: &vk::PhysicalDevice,
+    candidates: impl IntoIterator<Item = vk::Format>,
+    tiling: vk::ImageTiling,
+    features: vk::FormatFeatureFlags,
+) -> Option<vk::Format> {
+    candidates.into_iter().find(|format| {
+        let properties = instance.get_physical_device_format_properties(*pdevice, *format);
+
+        match tiling {
+            vk::ImageTiling::LINEAR => properties.linear_tiling_features.contains(features),
+            vk::ImageTiling::OPTIMAL => properties.optimal_tiling_features.contains(features),
+            _ => false,
+        }
+    })
 }
 
 unsafe fn get_swapchain(
@@ -944,10 +1020,7 @@ fn get_shader_code(name: impl AsRef<str>) -> Vec<u32> {
     read_spv(&mut file).unwrap()
 }
 
-unsafe fn get_render_pass(
-    device: &Device,
-    surface_format: vk::SurfaceFormatKHR,
-) -> vk::RenderPass {
+unsafe fn get_render_pass(device: &Device, surface_format: vk::SurfaceFormatKHR, depth_format: vk::Format) -> vk::RenderPass {
     let color_attachment = vk::AttachmentDescription::builder()
         .format(surface_format.format)
         .samples(vk::SampleCountFlags::TYPE_1)
@@ -958,25 +1031,43 @@ unsafe fn get_render_pass(
         .initial_layout(vk::ImageLayout::UNDEFINED)
         .final_layout(vk::ImageLayout::PRESENT_SRC_KHR);
 
+    let depth_attachment = vk::AttachmentDescription::builder()
+        .format(depth_format)
+        .samples(vk::SampleCountFlags::TYPE_1)
+        .load_op(vk::AttachmentLoadOp::CLEAR)
+        .store_op(vk::AttachmentStoreOp::STORE)
+        .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
+        .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
+        .initial_layout(vk::ImageLayout::UNDEFINED)
+        .final_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+
+    let attachments = [color_attachment.build(), depth_attachment.build()];
+
     let color_attachment_reference = vk::AttachmentReference {
         attachment: 0,
         layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
     };
 
+    let depth_attachment_reference = vk::AttachmentReference {
+        attachment: 1,
+        layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL
+    };
+
     let subpass = vk::SubpassDescription::builder()
         .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
-        .color_attachments(std::slice::from_ref(&color_attachment_reference));
+        .color_attachments(std::slice::from_ref(&color_attachment_reference))
+        .depth_stencil_attachment(&depth_attachment_reference);
 
     let subpass_dependency = vk::SubpassDependency::builder()
         .src_subpass(vk::SUBPASS_EXTERNAL)
         .dst_subpass(0)
-        .src_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
+        .src_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT | vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS)
         .src_access_mask(vk::AccessFlags::empty())
-        .dst_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
-        .dst_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE);
+        .dst_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT | vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS)
+        .dst_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE);
 
     let render_pass_create_info = vk::RenderPassCreateInfo::builder()
-        .attachments(std::slice::from_ref(&color_attachment))
+        .attachments(&attachments)
         .subpasses(std::slice::from_ref(&subpass))
         .dependencies(std::slice::from_ref(&subpass_dependency));
 
@@ -1051,6 +1142,11 @@ unsafe fn get_pipeline(
         .logic_op_enable(false)
         .attachments(std::slice::from_ref(&color_blend_attachment_state));
 
+    let depth_stencil_state = vk::PipelineDepthStencilStateCreateInfo::builder()
+        .depth_test_enable(true)
+        .depth_write_enable(true)
+        .depth_compare_op(vk::CompareOp::LESS);
+
     let ubo_binding = vk::DescriptorSetLayoutBinding::builder()
         .binding(0)
         .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
@@ -1067,8 +1163,8 @@ unsafe fn get_pipeline(
 
     let descriptor_set_layout_bindings = [ubo_binding, sampler_binding];
 
-    let descriptor_set_layout_create_info = vk::DescriptorSetLayoutCreateInfo::builder()
-        .bindings(&descriptor_set_layout_bindings);
+    let descriptor_set_layout_create_info =
+        vk::DescriptorSetLayoutCreateInfo::builder().bindings(&descriptor_set_layout_bindings);
 
     let descriptor_set_layout = device
         .create_descriptor_set_layout(&descriptor_set_layout_create_info, None)
@@ -1090,6 +1186,7 @@ unsafe fn get_pipeline(
         .multisample_state(&multisample_state)
         .color_blend_state(&color_blend_state)
         .dynamic_state(&dynamic_state)
+        .depth_stencil_state(&depth_stencil_state)
         .layout(pipeline_layout)
         .render_pass(*render_pass)
         .subpass(0);
@@ -1114,14 +1211,17 @@ unsafe fn get_framebuffers(
     device: &Device,
     image_views: &Vec<vk::ImageView>,
     image_extent: vk::Extent2D,
+    depth_view: &vk::ImageView,
     render_pass: &vk::RenderPass,
 ) -> Vec<vk::Framebuffer> {
     image_views
         .iter()
         .map(|image_view| {
+            let attachments = [*image_view, *depth_view];
+
             let framebuffer_create_info = vk::FramebufferCreateInfo::builder()
                 .render_pass(*render_pass)
-                .attachments(std::slice::from_ref(image_view))
+                .attachments(&attachments)
                 .width(image_extent.width)
                 .height(image_extent.height)
                 .layers(1);
@@ -1408,21 +1508,26 @@ unsafe fn persistent_map_to_buffer<T>(
     Align::new(ptr, std::mem::align_of::<T>() as u64, requirements.size)
 }
 
-unsafe fn get_texture_image_view(device: &Device, image: vk::Image, format: vk::Format) -> vk::ImageView {
+unsafe fn create_image_view(
+    device: &Device,
+    image: vk::Image,
+    format: vk::Format,
+    aspect: vk::ImageAspectFlags,
+) -> vk::ImageView {
     let create_info = vk::ImageViewCreateInfo::builder()
         .image(image)
         .format(format)
         .view_type(vk::ImageViewType::TYPE_2D)
         .subresource_range(
             vk::ImageSubresourceRange::builder()
-                .aspect_mask(vk::ImageAspectFlags::COLOR)
+                .aspect_mask(aspect)
                 .base_mip_level(0)
                 .level_count(1)
                 .base_array_layer(0)
                 .layer_count(1)
-                .build()
+                .build(),
         );
-    
+
     device.create_image_view(&create_info, None).unwrap()
 }
 
@@ -1496,9 +1601,17 @@ unsafe fn get_texture(
     device.destroy_buffer(src_buffer, None);
     allocator.free(src_allocation).unwrap();
 
-    let texture_view = get_texture_image_view(device, texture_image, vk::Format::R8G8B8A8_SRGB);
+    let texture_view = create_image_view(
+        device,
+        texture_image,
+        vk::Format::R8G8B8A8_SRGB,
+        vk::ImageAspectFlags::COLOR,
+    );
 
-    let max_anisotropy = instance.get_physical_device_properties(*pdevice).limits.max_sampler_anisotropy;
+    let max_anisotropy = instance
+        .get_physical_device_properties(*pdevice)
+        .limits
+        .max_sampler_anisotropy;
 
     let sampler_create_info = vk::SamplerCreateInfo::builder()
         .mag_filter(vk::Filter::LINEAR)
@@ -1514,7 +1627,12 @@ unsafe fn get_texture(
 
     let texture_sampler = device.create_sampler(&sampler_create_info, None).unwrap();
 
-    (texture_image, texture_allocation, texture_view, texture_sampler)
+    (
+        texture_image,
+        texture_allocation,
+        texture_view,
+        texture_sampler,
+    )
 }
 
 unsafe fn get_vertex_buffer(
@@ -1595,6 +1713,45 @@ unsafe fn get_index_buffer(
     (buffer, allocation)
 }
 
+unsafe fn get_depth_resources(
+    instance: &Instance,
+    device: &Device,
+    pdevice: &vk::PhysicalDevice,
+    allocator: &mut vma::Allocator,
+    image_extent: vk::Extent2D,
+) -> (vk::Image, vma::Allocation, vk::ImageView, vk::Format) {
+    let format = find_supported_format(
+        instance,
+        pdevice,
+        [
+            vk::Format::D32_SFLOAT,
+            vk::Format::D32_SFLOAT_S8_UINT,
+            vk::Format::D24_UNORM_S8_UINT,
+        ],
+        vk::ImageTiling::OPTIMAL,
+        vk::FormatFeatureFlags::DEPTH_STENCIL_ATTACHMENT,
+    )
+    .unwrap();
+
+    let has_stencil =
+        format == vk::Format::D32_SFLOAT_S8_UINT || format == vk::Format::D24_UNORM_S8_UINT;
+
+    let (depth_image, depth_allocation, _) = create_image(
+        device,
+        allocator,
+        image_extent.width,
+        image_extent.height,
+        format,
+        vk::ImageTiling::OPTIMAL,
+        vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
+        gpu_allocator::MemoryLocation::GpuOnly,
+    );
+
+    let depth_view = create_image_view(device, depth_image, format, vk::ImageAspectFlags::DEPTH);
+
+    (depth_image, depth_allocation, depth_view, format)
+}
+
 unsafe fn get_uniform_buffers(
     device: &Device,
     allocator: &mut vma::Allocator,
@@ -1667,7 +1824,7 @@ unsafe fn get_descriptor_sets(
         vk::DescriptorPoolSize::builder()
             .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
             .descriptor_count(frames_in_flight)
-            .build()
+            .build(),
     ];
 
     let descriptor_pool_create_info = vk::DescriptorPoolCreateInfo::builder()
