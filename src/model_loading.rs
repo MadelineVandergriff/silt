@@ -490,7 +490,7 @@ impl VulkanData {
         self.image_extent.width as f32 / self.image_extent.height as f32
     }
 
-    unsafe fn draw_frame(&mut self, current_frame: usize) {
+    unsafe fn draw_frame(&mut self, current_frame: usize, spin_angle: f32, zoom: f32) {
         let frame = &self.frame_data[current_frame];
 
         self.device
@@ -522,16 +522,16 @@ impl VulkanData {
             .unwrap();
         self.record_command_buffer(image_index, current_frame);
 
-        let time = START_TIME.elapsed().as_secs_f32();
+        //let time = START_TIME.elapsed().as_secs_f32();
         let ubo = UniformBufferObject {
-            model: glm::rotation(time, &glm::vec3(0., 0., 1.)),
+            model: glm::rotation(spin_angle as f32, &glm::vec3(0., 0., 1.)),
             view: glm::look_at(
-                &glm::vec3(1.5, 1.5, 1.5),
+                &glm::vec3(zoom, zoom, zoom),
                 &glm::vec3(0., 0., 0.),
                 &glm::vec3(0., 0., 1.),
             ),
             projection: {
-                let mut gl_formatted = glm::perspective_rh_zo(self.aspect_ratio(), 1.5, 0.1, 10.);
+                let mut gl_formatted = glm::perspective_rh_zo(self.aspect_ratio(), glm::half_pi(), 0.1, 10.);
                 *gl_formatted.get_mut((1, 1)).unwrap() *= -1.;
                 gl_formatted
             },
@@ -577,6 +577,8 @@ impl VulkanData {
         let event_loop = self.event_loop.take().unwrap();
         let mut old_time = Instant::now();
         let mut frame_count: u64 = 0;
+        let mut spin_angle: f32 = 0.;
+        let mut zoom: f32 = 1.5;
         event_loop.run(move |event, _, control_flow| {
             *control_flow = ControlFlow::Poll;
             match event {
@@ -584,6 +586,20 @@ impl VulkanData {
                     event: WindowEvent::CloseRequested,
                     ..
                 } => *control_flow = ControlFlow::Exit,
+                Event::DeviceEvent {event: winit::event::DeviceEvent::MouseWheel { delta }, .. } => {
+                    match delta {
+                        winit::event::MouseScrollDelta::PixelDelta(pos) => {
+                            if pos.x.abs() > 3. {
+                                spin_angle -= pos.x as f32 / 70.;
+                            }
+                            if pos.y.abs() > 3. {
+                                zoom += pos.y as f32 / 500.;
+                                zoom = zoom.clamp(0.5, 8.);
+                            }
+                        },
+                        _ => ()
+                    }
+                },
                 Event::MainEventsCleared => unsafe {
                     if self.window.is_minimized().unwrap_or_default() {
                         std::thread::sleep(Duration::from_millis(100));
@@ -597,7 +613,7 @@ impl VulkanData {
                         frame_count = 0;
                         old_time = new_time;
                     }
-                    self.draw_frame(self.current_frame);
+                    self.draw_frame(self.current_frame, spin_angle, zoom);
                 },
                 _ => (),
             }
