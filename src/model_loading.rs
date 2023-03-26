@@ -1753,7 +1753,7 @@ unsafe fn get_texture(
     let samples = texture.as_flat_samples();
 
     let (width, height) = texture.dimensions();
-    let mip_levels = width.max(height).checked_ilog2().unwrap() + 1;
+    let mip_levels = (width.max(height) as f32).log2().floor() as u32 + 1;
     let size = samples.min_length().unwrap() as u64;
 
     let (src_buffer, src_allocation, src_requirements) = create_buffer(
