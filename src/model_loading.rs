@@ -124,6 +124,7 @@ pub struct VulkanData {
     pub surface_capabilities: vk::SurfaceCapabilitiesKHR,
     pub surface_format: vk::SurfaceFormatKHR,
     pub present_mode: vk::PresentModeKHR,
+    pub msaa_samples: vk::SampleCountFlags,
 
     pub swapchain_loader: Option<Swapchain>,
     pub swapchain: Option<vk::SwapchainKHR>,
@@ -131,6 +132,10 @@ pub struct VulkanData {
 
     pub images: Vec<vk::Image>,
     pub image_views: Vec<vk::ImageView>,
+
+    pub color_image: vk::Image,
+    pub color_allocation: Option<vma::Allocation>,
+    pub color_view: vk::ImageView,
 
     pub depth_image: vk::Image,
     pub depth_allocation: Option<vma::Allocation>,
@@ -255,7 +260,7 @@ impl VulkanData {
             let (entry, instance) = get_instance(&window);
             let (debug_utils_loader, debug_callback) = get_debug_hooks(&entry, &instance);
             let (surface_loader, surface) = get_surface(&window, &entry, &instance);
-            let (pdevice, device, queue_family_index, queue) =
+            let (pdevice, device, queue_family_index, queue, msaa_samples) =
                 get_device_and_queue(&instance, &surface_loader, &surface);
             let allocator = get_allocator(&instance, &device, &pdevice);
             let (surface_capabilities, surface_format, present_mode) =
@@ -272,20 +277,31 @@ impl VulkanData {
             );
             let (images, image_views) =
                 get_image_views(&device, &swapchain_loader, &swapchain, surface_format);
+            let (color_image, color_allocation, color_view) = get_color_resources(
+                &instance,
+                &device,
+                &pdevice,
+                &mut allocator.borrow_mut(),
+                surface_format,
+                msaa_samples,
+                image_extent,
+            );
             let (depth_image, depth_allocation, depth_view, depth_format) = get_depth_resources(
                 &instance,
                 &device,
                 &pdevice,
                 &mut allocator.borrow_mut(),
+                msaa_samples,
                 image_extent,
             );
-            let render_pass = get_render_pass(&device, surface_format, depth_format);
+            let render_pass = get_render_pass(&device, surface_format, msaa_samples, depth_format);
             let (shader_modules, descriptor_set_layout, pipeline_layout, pipeline) =
-                get_pipeline(&device, &render_pass);
+                get_pipeline(&device, &render_pass, msaa_samples);
             let framebuffers = get_framebuffers(
                 &device,
                 &image_views,
                 image_extent,
+                &color_view,
                 &depth_view,
                 &render_pass,
             );
@@ -370,11 +386,15 @@ impl VulkanData {
                 surface_capabilities,
                 surface_format,
                 present_mode,
+                msaa_samples,
                 swapchain_loader: Some(swapchain_loader),
                 swapchain: Some(swapchain),
                 image_extent,
                 images,
                 image_views,
+                color_image,
+                color_allocation: Some(color_allocation),
+                color_view,
                 depth_image,
                 depth_allocation: Some(depth_allocation),
                 depth_view,
@@ -531,7 +551,8 @@ impl VulkanData {
                 &glm::vec3(0., 0., 1.),
             ),
             projection: {
-                let mut gl_formatted = glm::perspective_rh_zo(self.aspect_ratio(), glm::half_pi(), 0.1, 10.);
+                let mut gl_formatted =
+                    glm::perspective_rh_zo(self.aspect_ratio(), glm::half_pi(), 0.1, 10.);
                 *gl_formatted.get_mut((1, 1)).unwrap() *= -1.;
                 gl_formatted
             },
@@ -586,19 +607,20 @@ impl VulkanData {
                     event: WindowEvent::CloseRequested,
                     ..
                 } => *control_flow = ControlFlow::Exit,
-                Event::DeviceEvent {event: winit::event::DeviceEvent::MouseWheel { delta }, .. } => {
-                    match delta {
-                        winit::event::MouseScrollDelta::PixelDelta(pos) => {
-                            if pos.x.abs() > 3. {
-                                spin_angle -= pos.x as f32 / 70.;
-                            }
-                            if pos.y.abs() > 3. {
-                                zoom += pos.y as f32 / 500.;
-                                zoom = zoom.clamp(0.5, 8.);
-                            }
-                        },
-                        _ => ()
+                Event::DeviceEvent {
+                    event: winit::event::DeviceEvent::MouseWheel { delta },
+                    ..
+                } => match delta {
+                    winit::event::MouseScrollDelta::PixelDelta(pos) => {
+                        if pos.x.abs() > 3. {
+                            spin_angle -= pos.x as f32 / 70.;
+                        }
+                        if pos.y.abs() > 3. {
+                            zoom += pos.y as f32 / 500.;
+                            zoom = zoom.clamp(0.5, 8.);
+                        }
                     }
+                    _ => (),
                 },
                 Event::MainEventsCleared => unsafe {
                     if self.window.is_minimized().unwrap_or_default() {
@@ -632,6 +654,14 @@ impl VulkanData {
             .destroy_swapchain(self.swapchain.unwrap(), None);
         self.swapchain = None;
         self.swapchain_loader = None;
+
+        self.device.destroy_image_view(self.color_view, None);
+        self.device.destroy_image(self.color_image, None);
+        self.allocator
+            .borrow_mut()
+            .free(self.color_allocation.take().unwrap())
+            .unwrap();
+
         self.device.destroy_image_view(self.depth_view, None);
         self.device.destroy_image(self.depth_image, None);
         self.allocator
@@ -666,11 +696,22 @@ impl VulkanData {
             self.surface_format,
         );
 
+        let (color_image, color_allocation, color_view) = get_color_resources(
+            &self.instance,
+            &self.device,
+            &self.pdevice,
+            &mut self.allocator.borrow_mut(),
+            self.surface_format,
+            self.msaa_samples,
+            image_extent,
+        );
+
         let (depth_image, depth_allocation, depth_view, _) = get_depth_resources(
             &self.instance,
             &self.device,
             &self.pdevice,
             &mut self.allocator.borrow_mut(),
+            self.msaa_samples,
             image_extent,
         );
 
@@ -678,6 +719,7 @@ impl VulkanData {
             &self.device,
             &image_views,
             image_extent,
+            &color_view,
             &depth_view,
             &self.render_pass,
         );
@@ -688,6 +730,9 @@ impl VulkanData {
         self.images = images;
         self.image_views = image_views;
         self.framebuffers = framebuffers;
+        self.color_image = color_image;
+        self.color_allocation = Some(color_allocation);
+        self.color_view = color_view;
         self.depth_image = depth_image;
         self.depth_allocation = Some(depth_allocation);
         self.depth_view = depth_view;
@@ -850,7 +895,7 @@ unsafe fn get_pdevice_suitability(
     surface_loader: &Surface,
     surface: &vk::SurfaceKHR,
     pdevice: &vk::PhysicalDevice,
-) -> Option<(QueueFamilyIndex, i32)> {
+) -> Option<(QueueFamilyIndex, vk::SampleCountFlags, i32)> {
     let queue_family_props = instance.get_physical_device_queue_family_properties(*pdevice);
     let properties = instance.get_physical_device_properties(*pdevice);
     let features = instance.get_physical_device_features(*pdevice);
@@ -876,25 +921,35 @@ unsafe fn get_pdevice_suitability(
         _ => i32::MAX,
     };
 
-    Some((queue_index, priority))
+    let samples = properties.limits.framebuffer_color_sample_counts
+        & properties.limits.framebuffer_depth_sample_counts;
+    let samples = vk::SampleCountFlags::from_raw((samples.as_raw() + 1).next_power_of_two() >> 1);
+
+    Some((queue_index, samples, priority))
 }
 
 unsafe fn get_device_and_queue(
     instance: &Instance,
     surface_loader: &Surface,
     surface: &vk::SurfaceKHR,
-) -> (vk::PhysicalDevice, Device, QueueFamilyIndex, vk::Queue) {
-    let (pdevice, queue_family_index, _) = instance
+) -> (
+    vk::PhysicalDevice,
+    Device,
+    QueueFamilyIndex,
+    vk::Queue,
+    vk::SampleCountFlags,
+) {
+    let (pdevice, queue_family_index, msaa_samples, _) = instance
         .enumerate_physical_devices()
         .unwrap()
         .iter()
         .filter_map(|pdevice| {
-            let (queue_index, priority) =
+            let (queue_index, msaa_samples, priority) =
                 get_pdevice_suitability(instance, surface_loader, surface, pdevice)?;
 
-            Some((*pdevice, queue_index, priority))
+            Some((*pdevice, queue_index, msaa_samples, priority))
         })
-        .sorted_by_key(|(_, _, priority)| *priority)
+        .sorted_by_key(|(_, _, _, priority)| *priority)
         .next()
         .expect("Couldn't find suitable device.");
 
@@ -921,7 +976,7 @@ unsafe fn get_device_and_queue(
         .unwrap();
     let queue = device.get_device_queue(queue_family_index, 0);
 
-    (pdevice, device, queue_family_index, queue)
+    (pdevice, device, queue_family_index, queue, msaa_samples)
 }
 
 unsafe fn get_allocator(
@@ -1093,29 +1148,40 @@ fn get_shader_code(name: impl AsRef<str>) -> Vec<u32> {
 unsafe fn get_render_pass(
     device: &Device,
     surface_format: vk::SurfaceFormatKHR,
+    msaa_samples: vk::SampleCountFlags,
     depth_format: vk::Format,
 ) -> vk::RenderPass {
     let color_attachment = vk::AttachmentDescription::builder()
         .format(surface_format.format)
-        .samples(vk::SampleCountFlags::TYPE_1)
+        .samples(msaa_samples)
         .load_op(vk::AttachmentLoadOp::CLEAR)
         .store_op(vk::AttachmentStoreOp::STORE)
         .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
         .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
         .initial_layout(vk::ImageLayout::UNDEFINED)
-        .final_layout(vk::ImageLayout::PRESENT_SRC_KHR);
+        .final_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
 
     let depth_attachment = vk::AttachmentDescription::builder()
         .format(depth_format)
-        .samples(vk::SampleCountFlags::TYPE_1)
+        .samples(msaa_samples)
         .load_op(vk::AttachmentLoadOp::CLEAR)
         .store_op(vk::AttachmentStoreOp::STORE)
         .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
         .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
         .initial_layout(vk::ImageLayout::UNDEFINED)
         .final_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+    
+    let color_resolve_attachment = vk::AttachmentDescription::builder()
+        .format(surface_format.format)
+        .samples(vk::SampleCountFlags::TYPE_1)
+        .load_op(vk::AttachmentLoadOp::DONT_CARE)
+        .store_op(vk::AttachmentStoreOp::STORE)
+        .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
+        .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
+        .initial_layout(vk::ImageLayout::UNDEFINED)
+        .final_layout(vk::ImageLayout::PRESENT_SRC_KHR);
 
-    let attachments = [color_attachment.build(), depth_attachment.build()];
+    let attachments = [color_attachment.build(), depth_attachment.build(), color_resolve_attachment.build()];
 
     let color_attachment_reference = vk::AttachmentReference {
         attachment: 0,
@@ -1126,10 +1192,16 @@ unsafe fn get_render_pass(
         attachment: 1,
         layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
     };
-
+    
+    let color_resolve_attachment_reference = vk::AttachmentReference {
+        attachment: 2,
+        layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+    };
+    
     let subpass = vk::SubpassDescription::builder()
         .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
         .color_attachments(std::slice::from_ref(&color_attachment_reference))
+        .resolve_attachments(std::slice::from_ref(&color_resolve_attachment_reference))
         .depth_stencil_attachment(&depth_attachment_reference);
 
     let subpass_dependency = vk::SubpassDependency::builder()
@@ -1164,6 +1236,7 @@ unsafe fn get_render_pass(
 unsafe fn get_pipeline(
     device: &Device,
     render_pass: &vk::RenderPass,
+    msaa_samples: vk::SampleCountFlags,
 ) -> (
     Vec<vk::ShaderModule>,
     vk::DescriptorSetLayout,
@@ -1215,7 +1288,7 @@ unsafe fn get_pipeline(
 
     let multisample_state = vk::PipelineMultisampleStateCreateInfo::builder()
         .sample_shading_enable(false)
-        .rasterization_samples(vk::SampleCountFlags::TYPE_1);
+        .rasterization_samples(msaa_samples);
 
     let color_blend_attachment_state = vk::PipelineColorBlendAttachmentState::builder()
         .color_write_mask(vk::ColorComponentFlags::RGBA)
@@ -1294,13 +1367,14 @@ unsafe fn get_framebuffers(
     device: &Device,
     image_views: &Vec<vk::ImageView>,
     image_extent: vk::Extent2D,
+    color_view: &vk::ImageView,
     depth_view: &vk::ImageView,
     render_pass: &vk::RenderPass,
 ) -> Vec<vk::Framebuffer> {
     image_views
         .iter()
         .map(|image_view| {
-            let attachments = [*image_view, *depth_view];
+            let attachments = [*color_view, *depth_view, *image_view];
 
             let framebuffer_create_info = vk::FramebufferCreateInfo::builder()
                 .render_pass(*render_pass)
@@ -1346,32 +1420,52 @@ unsafe fn create_buffer(
     (buffer, allocation, requirements)
 }
 
+struct ImageCreateInfo {
+    pub width: u32,
+    pub height: u32,
+    pub format: vk::Format,
+    pub tiling: vk::ImageTiling,
+    pub usage: vk::ImageUsageFlags,
+    pub location: gpu_allocator::MemoryLocation,
+    pub mip_levels: u32,
+    pub samples: vk::SampleCountFlags,
+}
+
+impl Default for ImageCreateInfo {
+    fn default() -> Self {
+        Self {
+            width: 0,
+            height: 0,
+            format: vk::Format::UNDEFINED,
+            tiling: vk::ImageTiling::LINEAR,
+            usage: vk::ImageUsageFlags::empty(),
+            location: gpu_allocator::MemoryLocation::Unknown,
+            mip_levels: 1,
+            samples: vk::SampleCountFlags::TYPE_1,
+        }
+    }
+}
+
 unsafe fn create_image(
     device: &Device,
     allocator: &mut vma::Allocator,
-    width: u32,
-    height: u32,
-    mip_levels: u32,
-    format: vk::Format,
-    tiling: vk::ImageTiling,
-    usage: vk::ImageUsageFlags,
-    location: gpu_allocator::MemoryLocation,
+    create_info: ImageCreateInfo,
 ) -> (vk::Image, vma::Allocation, vk::MemoryRequirements) {
     let texture_image_create_info = vk::ImageCreateInfo::builder()
         .image_type(vk::ImageType::TYPE_2D)
         .extent(vk::Extent3D {
-            width,
-            height,
+            width: create_info.width,
+            height: create_info.height,
             depth: 1,
         })
-        .mip_levels(mip_levels)
+        .mip_levels(create_info.mip_levels)
         .array_layers(1)
-        .format(format)
-        .tiling(tiling)
+        .format(create_info.format)
+        .tiling(create_info.tiling)
         .initial_layout(vk::ImageLayout::UNDEFINED)
-        .usage(usage)
+        .usage(create_info.usage)
         .sharing_mode(vk::SharingMode::EXCLUSIVE)
-        .samples(vk::SampleCountFlags::TYPE_1);
+        .samples(create_info.samples);
 
     let image = device
         .create_image(&texture_image_create_info, None)
@@ -1381,7 +1475,7 @@ unsafe fn create_image(
     let allocation_create_info = vma::AllocationCreateDesc {
         name: "UNNAMED IMAGE",
         requirements,
-        location,
+        location: create_info.location,
         linear: true,
         allocation_scheme: vma::AllocationScheme::DedicatedImage(image),
     };
@@ -1770,19 +1864,20 @@ unsafe fn get_texture(
         samples.as_slice(),
     );
 
-    let (texture_image, texture_allocation, _) = create_image(
-        device,
-        allocator,
+    let image_create_info = ImageCreateInfo {
         width,
         height,
         mip_levels,
-        vk::Format::R8G8B8A8_SRGB,
-        vk::ImageTiling::OPTIMAL,
-        vk::ImageUsageFlags::TRANSFER_DST
+        format: vk::Format::R8G8B8A8_SRGB,
+        tiling: vk::ImageTiling::OPTIMAL,
+        usage: vk::ImageUsageFlags::TRANSFER_DST
             | vk::ImageUsageFlags::TRANSFER_SRC
             | vk::ImageUsageFlags::SAMPLED,
-        gpu_allocator::MemoryLocation::GpuOnly,
-    );
+        location: gpu_allocator::MemoryLocation::GpuOnly,
+        ..Default::default()
+    };
+
+    let (texture_image, texture_allocation, _) = create_image(device, allocator, image_create_info);
 
     transition_image_layout(
         device,
@@ -1932,11 +2027,47 @@ unsafe fn get_index_buffer(
     (buffer, allocation)
 }
 
+unsafe fn get_color_resources(
+    instance: &Instance,
+    device: &Device,
+    pdevice: &vk::PhysicalDevice,
+    allocator: &mut vma::Allocator,
+    surface_format: vk::SurfaceFormatKHR,
+    msaa_samples: vk::SampleCountFlags,
+    image_extent: vk::Extent2D,
+) -> (vk::Image, vma::Allocation, vk::ImageView) {
+    let color_format = surface_format.format;
+
+    let image_create_info = ImageCreateInfo {
+        width: image_extent.width,
+        height: image_extent.height,
+        format: color_format,
+        samples: msaa_samples,
+        tiling: vk::ImageTiling::OPTIMAL,
+        usage: vk::ImageUsageFlags::TRANSIENT_ATTACHMENT | vk::ImageUsageFlags::COLOR_ATTACHMENT,
+        location: gpu_allocator::MemoryLocation::GpuOnly,
+        ..Default::default()
+    };
+
+    let (color_image, color_allocation, _) = create_image(device, allocator, image_create_info);
+
+    let color_view = create_image_view(
+        device,
+        color_image,
+        color_format,
+        1,
+        vk::ImageAspectFlags::COLOR,
+    );
+
+    (color_image, color_allocation, color_view)
+}
+
 unsafe fn get_depth_resources(
     instance: &Instance,
     device: &Device,
     pdevice: &vk::PhysicalDevice,
     allocator: &mut vma::Allocator,
+    msaa_samples: vk::SampleCountFlags,
     image_extent: vk::Extent2D,
 ) -> (vk::Image, vma::Allocation, vk::ImageView, vk::Format) {
     let format = find_supported_format(
@@ -1952,17 +2083,18 @@ unsafe fn get_depth_resources(
     )
     .unwrap();
 
-    let (depth_image, depth_allocation, _) = create_image(
-        device,
-        allocator,
-        image_extent.width,
-        image_extent.height,
-        1,
+    let image_create_info = ImageCreateInfo {
+        width: image_extent.width,
+        height: image_extent.height,
         format,
-        vk::ImageTiling::OPTIMAL,
-        vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
-        gpu_allocator::MemoryLocation::GpuOnly,
-    );
+        tiling: vk::ImageTiling::OPTIMAL,
+        usage: vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
+        location: gpu_allocator::MemoryLocation::GpuOnly,
+        samples: msaa_samples,
+        ..Default::default()
+    };
+
+    let (depth_image, depth_allocation, _) = create_image(device, allocator, image_create_info);
 
     let depth_view = create_image_view(device, depth_image, format, 1, vk::ImageAspectFlags::DEPTH);
 
