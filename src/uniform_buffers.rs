@@ -61,6 +61,7 @@ impl Bindable for Vertex {
 }
 
 #[derive(Clone, Copy)]
+#[allow(dead_code)]
 pub struct UniformBufferObject {
     model: glm::Mat4,
     view: glm::Mat4,

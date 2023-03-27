@@ -4,34 +4,34 @@ use ash::util::{read_spv, Align};
 use ash::vk::{self, PhysicalDeviceType};
 use ash::{Device, Entry, Instance};
 use gpu_allocator::vulkan as vma;
+use gpu_allocator::MemoryLocation as VmaMemoryLocation;
 use itertools::Itertools;
 use memoffset::offset_of;
-use nalgebra_glm as glm;
-use once_cell::sync::Lazy;
 use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
 use std::borrow::Cow;
 use std::cell::RefCell;
+use std::f32::consts::*;
 use std::ffi::CStr;
 use std::time::{Duration, Instant};
 use std::{fs, path::Path};
 use winit::event::{Event, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
 use winit::window::{Window, WindowBuilder};
+use derive_more::*;
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 use ash::vk::{
     KhrGetPhysicalDeviceProperties2Fn, KhrPortabilityEnumerationFn, KhrPortabilitySubsetFn,
 };
 
-static START_TIME: Lazy<Instant> = Lazy::new(|| Instant::now());
-
-pub type QueueFamilyIndex = u32;
+#[derive(Clone, Copy, Debug, Default, From, Into)]
+pub struct QueueFamilyIndex(u32);
 
 #[derive(Copy, Clone, Debug, Default)]
 pub struct Vertex {
-    pub pos: glm::Vec3,
-    pub color: glm::Vec3,
-    pub tex_coord: glm::Vec2,
+    pub pos: glam::Vec3,
+    pub color: glam::Vec3,
+    pub tex_coord: glam::Vec2,
 }
 
 pub trait Bindable {
@@ -75,9 +75,9 @@ impl Bindable for Vertex {
 #[derive(Clone, Copy)]
 #[allow(dead_code)]
 pub struct UniformBufferObject {
-    model: glm::Mat4,
-    view: glm::Mat4,
-    projection: glm::Mat4,
+    model: glam::Mat4,
+    view: glam::Mat4,
+    projection: glam::Mat4,
 }
 
 #[derive(Clone, Copy)]
@@ -116,7 +116,7 @@ pub struct VulkanData {
 
     pub pdevice: vk::PhysicalDevice,
     pub device: Device,
-    pub queue_family_index: u32,
+    pub queue_family_index: QueueFamilyIndex,
     pub queue: vk::Queue,
 
     pub allocator: RefCell<vma::Allocator>,
@@ -172,90 +172,7 @@ impl VulkanData {
         unsafe {
             let frames_in_flight: u32 = 2;
             let (width, height) = (640, 480);
-
-            let top = vec![
-                Vertex {
-                    pos: glm::vec3(-1., -1., 1.),
-                    color: glm::vec3(0., 0., 0.),
-                    tex_coord: glm::vec2(1., 0.),
-                },
-                Vertex {
-                    pos: glm::vec3(1., -1., 1.),
-                    color: glm::vec3(0., 0., 0.),
-                    tex_coord: glm::vec2(0., 0.),
-                },
-                Vertex {
-                    pos: glm::vec3(1., 1., 1.),
-                    color: glm::vec3(0., 0., 0.),
-                    tex_coord: glm::vec2(0., 1.),
-                },
-                Vertex {
-                    pos: glm::vec3(-1., 1., 1.),
-                    color: glm::vec3(0., 0., 0.),
-                    tex_coord: glm::vec2(1., 1.),
-                },
-            ];
-
-            let rotate_x = glm::rotation(glm::half_pi(), &glm::vec3::<f32>(1., 0., 0.));
-            let rotate_y = glm::rotation(glm::half_pi(), &glm::vec3::<f32>(0., 1., 0.));
-
-            let right = top
-                .iter()
-                .map(|vtx| Vertex {
-                    pos: (rotate_x * glm::vec4(vtx.pos.x, vtx.pos.y, vtx.pos.z, 1.)).xyz(),
-                    ..*vtx
-                })
-                .collect::<Vec<_>>();
-
-            let bottom = right
-                .iter()
-                .map(|vtx| Vertex {
-                    pos: (rotate_x * glm::vec4(vtx.pos.x, vtx.pos.y, vtx.pos.z, 1.)).xyz(),
-                    ..*vtx
-                })
-                .collect::<Vec<_>>();
-
-            let left = bottom
-                .iter()
-                .map(|vtx| Vertex {
-                    pos: (rotate_x * glm::vec4(vtx.pos.x, vtx.pos.y, vtx.pos.z, 1.)).xyz(),
-                    ..*vtx
-                })
-                .collect::<Vec<_>>();
-
-            let back = top
-                .iter()
-                .map(|vtx| Vertex {
-                    pos: (rotate_y * glm::vec4(vtx.pos.x, vtx.pos.y, vtx.pos.z, 1.)).xyz(),
-                    ..*vtx
-                })
-                .collect::<Vec<_>>();
-
-            let front = back
-                .iter()
-                .map(|vtx| Vertex {
-                    pos: (rotate_y * rotate_y * glm::vec4(vtx.pos.x, vtx.pos.y, vtx.pos.z, 1.))
-                        .xyz(),
-                    ..*vtx
-                })
-                .collect::<Vec<_>>();
-
-            let top2 = top
-                .iter()
-                .map(|vtx| Vertex {
-                    pos: vtx.pos - glm::vec3(0., 0., 0.5),
-                    ..*vtx
-                })
-                .collect::<Vec<_>>();
-
-            let vertices = top.into_iter().chain(top2).collect::<Vec<_>>();
-
-            let indices = (0..6)
-                .flat_map(|face| [0, 1, 2, 2, 3, 0].map(|idx| idx + face * 4))
-                .collect::<Vec<_>>();
-
             let (vertices, indices) = load_model();
-
             let (window, event_loop) = get_window(width, height);
             let (entry, instance) = get_instance(&window);
             let (debug_utils_loader, debug_callback) = get_debug_hooks(&entry, &instance);
@@ -278,9 +195,7 @@ impl VulkanData {
             let (images, image_views) =
                 get_image_views(&device, &swapchain_loader, &swapchain, surface_format);
             let (color_image, color_allocation, color_view) = get_color_resources(
-                &instance,
                 &device,
-                &pdevice,
                 &mut allocator.borrow_mut(),
                 surface_format,
                 msaa_samples,
@@ -544,18 +459,13 @@ impl VulkanData {
 
         //let time = START_TIME.elapsed().as_secs_f32();
         let ubo = UniformBufferObject {
-            model: glm::rotation(spin_angle as f32, &glm::vec3(0., 0., 1.)),
-            view: glm::look_at(
-                &glm::vec3(zoom, zoom, zoom),
-                &glm::vec3(0., 0., 0.),
-                &glm::vec3(0., 0., 1.),
+            model: glam::Mat4::from_rotation_z(spin_angle as f32),
+            view: glam::Mat4::look_at_rh (
+                glam::vec3(zoom, zoom, zoom),
+                glam::vec3(0., 0., 0.),
+                glam::vec3(0., 0., -1.),
             ),
-            projection: {
-                let mut gl_formatted =
-                    glm::perspective_rh_zo(self.aspect_ratio(), glm::half_pi(), 0.1, 10.);
-                *gl_formatted.get_mut((1, 1)).unwrap() *= -1.;
-                gl_formatted
-            },
+            projection: glam::Mat4::perspective_rh(self.aspect_ratio(), FRAC_PI_2, 0.1, 100.),
         };
         frame
             .uniform_buffer_mapping
@@ -697,9 +607,7 @@ impl VulkanData {
         );
 
         let (color_image, color_allocation, color_view) = get_color_resources(
-            &self.instance,
             &self.device,
-            &self.pdevice,
             &mut self.allocator.borrow_mut(),
             self.surface_format,
             self.msaa_samples,
@@ -768,9 +676,9 @@ fn load_model() -> (Vec<Vertex>, Vec<u32>) {
         mesh.texcoords.chunks_exact(2),
     )
     .map(|(pos, uv)| Vertex {
-        pos: glm::vec3(pos[0], pos[1], pos[2]),
-        color: glm::zero(),
-        tex_coord: glm::vec2(uv[0], 1. - uv[1]),
+        pos: glam::vec3(pos[0], pos[1], pos[2]),
+        color: glam::Vec3::ZERO,
+        tex_coord: glam::vec2(uv[0], 1. - uv[1]),
     })
     .collect::<Vec<_>>();
 
@@ -925,7 +833,7 @@ unsafe fn get_pdevice_suitability(
         & properties.limits.framebuffer_depth_sample_counts;
     let samples = vk::SampleCountFlags::from_raw((samples.as_raw() + 1).next_power_of_two() >> 1);
 
-    Some((queue_index, samples, priority))
+    Some((queue_index.into(), samples, priority))
 }
 
 unsafe fn get_device_and_queue(
@@ -963,7 +871,7 @@ unsafe fn get_device_and_queue(
 
     let queue_priorities = [1.0];
     let queue_create_info = vk::DeviceQueueCreateInfo::builder()
-        .queue_family_index(queue_family_index)
+        .queue_family_index(queue_family_index.into())
         .queue_priorities(&queue_priorities);
 
     let device_create_info = vk::DeviceCreateInfo::builder()
@@ -974,7 +882,7 @@ unsafe fn get_device_and_queue(
     let device = instance
         .create_device(pdevice, &device_create_info, None)
         .unwrap();
-    let queue = device.get_device_queue(queue_family_index, 0);
+    let queue = device.get_device_queue(queue_family_index.into(), 0);
 
     (pdevice, device, queue_family_index, queue, msaa_samples)
 }
@@ -1395,7 +1303,7 @@ unsafe fn create_buffer(
     allocator: &mut vma::Allocator,
     size: u64,
     usage: vk::BufferUsageFlags,
-    location: gpu_allocator::MemoryLocation,
+    location: VmaMemoryLocation,
 ) -> (vk::Buffer, vma::Allocation, vk::MemoryRequirements) {
     let buffer_create_info = vk::BufferCreateInfo::builder()
         .size(size)
@@ -1426,7 +1334,7 @@ struct ImageCreateInfo {
     pub format: vk::Format,
     pub tiling: vk::ImageTiling,
     pub usage: vk::ImageUsageFlags,
-    pub location: gpu_allocator::MemoryLocation,
+    pub location: VmaMemoryLocation,
     pub mip_levels: u32,
     pub samples: vk::SampleCountFlags,
 }
@@ -1439,7 +1347,7 @@ impl Default for ImageCreateInfo {
             format: vk::Format::UNDEFINED,
             tiling: vk::ImageTiling::LINEAR,
             usage: vk::ImageUsageFlags::empty(),
-            location: gpu_allocator::MemoryLocation::Unknown,
+            location: VmaMemoryLocation::Unknown,
             mip_levels: 1,
             samples: vk::SampleCountFlags::TYPE_1,
         }
@@ -1735,7 +1643,7 @@ unsafe fn generate_mipmaps(
             )
             .build();
 
-        for mip_level in (0..mip_levels - 1) {
+        for mip_level in 0..mip_levels - 1 {
             let mip_width = (width >> mip_level).max(1);
             let mip_height = (height >> mip_level).max(1);
 
@@ -1855,7 +1763,7 @@ unsafe fn get_texture(
         allocator,
         size,
         vk::BufferUsageFlags::TRANSFER_SRC,
-        gpu_allocator::MemoryLocation::CpuToGpu,
+        VmaMemoryLocation::CpuToGpu,
     );
     map_to_buffer(
         device,
@@ -1873,7 +1781,7 @@ unsafe fn get_texture(
         usage: vk::ImageUsageFlags::TRANSFER_DST
             | vk::ImageUsageFlags::TRANSFER_SRC
             | vk::ImageUsageFlags::SAMPLED,
-        location: gpu_allocator::MemoryLocation::GpuOnly,
+        location: VmaMemoryLocation::GpuOnly,
         ..Default::default()
     };
 
@@ -1961,7 +1869,7 @@ unsafe fn get_vertex_buffer(
         allocator,
         std::mem::size_of_val(vertices) as u64,
         vk::BufferUsageFlags::TRANSFER_SRC,
-        gpu_allocator::MemoryLocation::CpuToGpu,
+        VmaMemoryLocation::CpuToGpu,
     );
 
     let (buffer, allocation, requirements) = create_buffer(
@@ -1969,7 +1877,7 @@ unsafe fn get_vertex_buffer(
         allocator,
         std::mem::size_of_val(vertices) as u64,
         vk::BufferUsageFlags::VERTEX_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
-        gpu_allocator::MemoryLocation::GpuOnly,
+        VmaMemoryLocation::GpuOnly,
     );
 
     map_to_buffer(device, &src_allocation, src_requirements, vertices);
@@ -2000,7 +1908,7 @@ unsafe fn get_index_buffer(
         allocator,
         std::mem::size_of_val(indices) as u64,
         vk::BufferUsageFlags::TRANSFER_SRC,
-        gpu_allocator::MemoryLocation::CpuToGpu,
+        VmaMemoryLocation::CpuToGpu,
     );
 
     let (buffer, allocation, requirements) = create_buffer(
@@ -2008,7 +1916,7 @@ unsafe fn get_index_buffer(
         allocator,
         std::mem::size_of_val(indices) as u64,
         vk::BufferUsageFlags::INDEX_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
-        gpu_allocator::MemoryLocation::GpuOnly,
+        VmaMemoryLocation::GpuOnly,
     );
 
     map_to_buffer(device, &src_allocation, src_requirements, indices);
@@ -2028,9 +1936,7 @@ unsafe fn get_index_buffer(
 }
 
 unsafe fn get_color_resources(
-    instance: &Instance,
     device: &Device,
-    pdevice: &vk::PhysicalDevice,
     allocator: &mut vma::Allocator,
     surface_format: vk::SurfaceFormatKHR,
     msaa_samples: vk::SampleCountFlags,
@@ -2045,7 +1951,7 @@ unsafe fn get_color_resources(
         samples: msaa_samples,
         tiling: vk::ImageTiling::OPTIMAL,
         usage: vk::ImageUsageFlags::TRANSIENT_ATTACHMENT | vk::ImageUsageFlags::COLOR_ATTACHMENT,
-        location: gpu_allocator::MemoryLocation::GpuOnly,
+        location: VmaMemoryLocation::GpuOnly,
         ..Default::default()
     };
 
@@ -2089,7 +1995,7 @@ unsafe fn get_depth_resources(
         format,
         tiling: vk::ImageTiling::OPTIMAL,
         usage: vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
-        location: gpu_allocator::MemoryLocation::GpuOnly,
+        location: VmaMemoryLocation::GpuOnly,
         samples: msaa_samples,
         ..Default::default()
     };
@@ -2113,7 +2019,7 @@ unsafe fn get_uniform_buffers(
                 allocator,
                 std::mem::size_of::<UniformBufferObject>() as u64,
                 vk::BufferUsageFlags::UNIFORM_BUFFER,
-                gpu_allocator::MemoryLocation::CpuToGpu,
+                VmaMemoryLocation::CpuToGpu,
             );
 
             let persistent_mapping = persistent_map_to_buffer(device, &allocation, requirements);
@@ -2130,7 +2036,7 @@ unsafe fn get_command_buffers(
 ) -> (vk::CommandPool, vk::CommandPool, Vec<vk::CommandBuffer>) {
     let command_pool_create_info = vk::CommandPoolCreateInfo::builder()
         .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER)
-        .queue_family_index(queue_family_index);
+        .queue_family_index(queue_family_index.into());
 
     let command_pool = device
         .create_command_pool(&command_pool_create_info, None)
@@ -2138,7 +2044,7 @@ unsafe fn get_command_buffers(
 
     let transient_command_pool_create_info = vk::CommandPoolCreateInfo::builder()
         .flags(vk::CommandPoolCreateFlags::TRANSIENT)
-        .queue_family_index(queue_family_index);
+        .queue_family_index(queue_family_index.into());
 
     let transient_command_pool = device
         .create_command_pool(&transient_command_pool_create_info, None)
