@@ -18,6 +18,7 @@ use winit::event::{Event, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
 use winit::window::{Window, WindowBuilder};
 use derive_more::*;
+use crate::shader;
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 use ash::vk::{
@@ -1039,18 +1040,12 @@ unsafe fn get_image_views(
 }
 
 unsafe fn get_shader_module(device: &Device, name: impl AsRef<str>) -> vk::ShaderModule {
-    let code = get_shader_code(name);
-    let shader_module_create_info = vk::ShaderModuleCreateInfo::builder().code(&code);
+    let code: Vec<u32> = shader!(name.as_ref()).into();
+    let shader_module_create_info = vk::ShaderModuleCreateInfo::builder().code(&code[..]);
 
     device
         .create_shader_module(&shader_module_create_info, None)
         .unwrap()
-}
-
-fn get_shader_code(name: impl AsRef<str>) -> Vec<u32> {
-    let path = Path::new(env!("OUT_DIR")).join(format!("{}.spirv", name.as_ref()));
-    let mut file = fs::File::open(path).unwrap();
-    read_spv(&mut file).unwrap()
 }
 
 unsafe fn get_render_pass(
@@ -1151,8 +1146,8 @@ unsafe fn get_pipeline(
     vk::PipelineLayout,
     vk::Pipeline,
 ) {
-    let vertex_shader_module = get_shader_module(device, "texture_mapping.vert");
-    let fragment_shader_module = get_shader_module(device, "texture_mapping.frag");
+    let vertex_shader_module = get_shader_module(device, "src/shaders/texture_mapping.vert");
+    let fragment_shader_module = get_shader_module(device, "src/shaders/texture_mapping.frag");
 
     let vertex_stage_create_info = vk::PipelineShaderStageCreateInfo::builder()
         .stage(vk::ShaderStageFlags::VERTEX)
