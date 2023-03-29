@@ -1,6 +1,6 @@
 use ash::extensions::ext::DebugUtils;
 use ash::extensions::khr::{Surface, Swapchain};
-use ash::util::{read_spv, Align};
+use ash::util::Align;
 use ash::vk::{self, PhysicalDeviceType};
 use ash::{Device, Entry, Instance};
 use gpu_allocator::vulkan as vma;
@@ -13,11 +13,11 @@ use std::cell::RefCell;
 use std::f32::consts::*;
 use std::ffi::CStr;
 use std::time::{Duration, Instant};
-use std::{fs, path::Path};
 use winit::event::{Event, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
 use winit::window::{Window, WindowBuilder};
 use derive_more::*;
+use crate::macros::ShaderOptions;
 use crate::shader;
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]
@@ -458,7 +458,6 @@ impl VulkanData {
             .unwrap();
         self.record_command_buffer(image_index, current_frame);
 
-        //let time = START_TIME.elapsed().as_secs_f32();
         let ubo = UniformBufferObject {
             model: glam::Mat4::from_rotation_z(spin_angle as f32),
             view: glam::Mat4::look_at_rh (
@@ -466,7 +465,7 @@ impl VulkanData {
                 glam::vec3(0., 0., 0.),
                 glam::vec3(0., 0., -1.),
             ),
-            projection: glam::Mat4::perspective_rh(self.aspect_ratio(), FRAC_PI_2, 0.1, 100.),
+            projection: glam::Mat4::perspective_rh(FRAC_PI_2, self.aspect_ratio(), 0.1, 100.),
         };
         frame
             .uniform_buffer_mapping
@@ -1040,7 +1039,7 @@ unsafe fn get_image_views(
 }
 
 unsafe fn get_shader_module(device: &Device, name: impl AsRef<str>) -> vk::ShaderModule {
-    let code: Vec<u32> = shader!(name.as_ref()).into();
+    let code: Vec<u32> = shader!(name.as_ref(), ShaderOptions::CACHE).unwrap().into();
     let shader_module_create_info = vk::ShaderModuleCreateInfo::builder().code(&code[..]);
 
     device

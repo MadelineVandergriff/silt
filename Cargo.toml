@@ -20,6 +20,7 @@ raw-window-handle = "0.5.1"
 tobj = "3.2.4"
 winit = "0.28.2"
 shaderc = "0.8.2"
-
-[build-dependencies]
-shaderc = "0.8.2"
+thiserror = "1.0.40"
+anyhow = "1.0.70"
+color-eyre = "0.6.2"
+bitflags = "2.0.2"
