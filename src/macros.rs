@@ -1,4 +1,4 @@
-use crate::error::ShaderCompileError::{self, *};
+use anyhow::{anyhow, Result};
 use ash::util::read_spv;
 use bitflags::bitflags;
 use derive_more::Into;
@@ -17,26 +17,24 @@ static SHADERC_COMPILER: Lazy<Compiler> = Lazy::new(|| Compiler::new().unwrap())
 #[macro_export]
 macro_rules! shader {
     ($path: literal $(, $options: expr)?) => {
-        $crate::macros::get_shader_code($path, include_str!($path), ($($options)?).into(), std::path::Path::new(file!()).parent().unwrap().into())
+        $crate::macros::__get_shader_code($path, include_str!($path), ($($options)?).into(), std::path::Path::new(file!()).parent().unwrap().into())
     };
     ($path: expr $(, $options: expr)?) => {
         match std::fs::read($path) {
             Ok(text) => {
-                $crate::macros::get_shader_code($path, std::str::from_utf8(&text).unwrap(), ($($options)?).into(), std::env::current_dir().unwrap())
+                $crate::macros::__get_shader_code($path, std::str::from_utf8(&text).unwrap(), ($($options)?).into(), std::env::current_dir().unwrap())
             },
-            Err(err) => {
-                Err($crate::error::ShaderCompileError::from(err))
-            }
+            _ => Err(anyhow::anyhow!("failed to read shader code"))
         }
     };
 }
 
-pub fn get_shader_code(
+pub fn __get_shader_code(
     path: &str,
     text: &str,
     options: ShaderOptions,
     invocation_path: PathBuf,
-) -> Result<ShaderCode, ShaderCompileError> {
+) -> Result<ShaderCode> {
     let cache_enabled = options.contains(ShaderOptions::CACHE) && cfg!(target_os = "linux");
     let flat_path = String::from(path).replace("/", "_");
     let spirv_path = String::from("/tmp/silt_") + &flat_path + ".spirv";
@@ -48,28 +46,28 @@ pub fn get_shader_code(
 
         match (spirv_file, copy_text) {
             (Ok(ref mut spirv_file), Ok(copy_text)) if copy_text == text => {
-                let code = read_spv(spirv_file).map_err(|_| AshLoadFailure)?;
+                let code = read_spv(spirv_file)?;
                 return Ok(ShaderCode(code));
             }
             _ => (),
         }
     }
 
-    let shader_kind = get_kind(path).ok_or(ShaderKindUnknown(path.into()))?;
+    let shader_kind = get_kind(path).ok_or(anyhow!("failed to determine shader type"))?;
     let spirv = SHADERC_COMPILER
         .compile_into_spirv(text, shader_kind, path, "main", None)
-        .map_err(Into::<ShaderCompileError>::into)?;
-    let code = read_spv(&mut Cursor::new(spirv.as_binary_u8())).map_err(|_| AshLoadFailure)?;
+        ?;
+    let code = read_spv(&mut Cursor::new(spirv.as_binary_u8()))?;
 
     if cache_enabled {
-        fs::write(&spirv_path, spirv.as_binary_u8()).unwrap();
-        fs::copy(invocation_path.join(path), copy_path).unwrap();
+        fs::write(&spirv_path, spirv.as_binary_u8())?;
+        fs::copy(invocation_path.join(path), copy_path)?;
     }
 
     Ok(ShaderCode(code))
 }
 
-pub fn get_kind(path: &str) -> Option<shaderc::ShaderKind> {
+fn get_kind(path: &str) -> Option<shaderc::ShaderKind> {
     let extension = Path::new(path).extension()?.to_str()?;
     match extension {
         "vert" => Some(shaderc::ShaderKind::Vertex),
