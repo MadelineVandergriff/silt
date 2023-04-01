@@ -1,10 +1,6 @@
-use ash::extensions::ext::DebugUtils;
-use ash::extensions::khr::{Surface, Swapchain};
+use crate::prelude::*;
+use crate::vk;
 use ash::util::Align;
-use ash::vk::{self, PhysicalDeviceType};
-use ash::{Device, Entry, Instance};
-use gpu_allocator::vulkan as vma;
-use gpu_allocator::MemoryLocation as VmaMemoryLocation;
 use itertools::Itertools;
 use memoffset::offset_of;
 use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
@@ -21,7 +17,7 @@ use crate::macros::ShaderOptions;
 use crate::shader;
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]
-use ash::vk::{
+use crate::vk::{
     KhrGetPhysicalDeviceProperties2Fn, KhrPortabilityEnumerationFn, KhrPortabilitySubsetFn,
 };
 
@@ -91,7 +87,7 @@ pub struct Image {
 pub struct FrameData {
     pub command_buffer: vk::CommandBuffer,
     pub uniform_buffer: vk::Buffer,
-    pub uniform_buffer_allocation: vma::Allocation,
+    pub uniform_buffer_allocation: vk::Allocation,
     pub uniform_buffer_mapping: RefCell<Align<UniformBufferObject>>,
     pub descriptor_set: vk::DescriptorSet,
     pub image_available: vk::Semaphore,
@@ -120,7 +116,7 @@ pub struct VulkanData {
     pub queue_family_index: QueueFamilyIndex,
     pub queue: vk::Queue,
 
-    pub allocator: RefCell<vma::Allocator>,
+    pub allocator: Allocator,
 
     pub surface_capabilities: vk::SurfaceCapabilitiesKHR,
     pub surface_format: vk::SurfaceFormatKHR,
@@ -135,11 +131,11 @@ pub struct VulkanData {
     pub image_views: Vec<vk::ImageView>,
 
     pub color_image: vk::Image,
-    pub color_allocation: Option<vma::Allocation>,
+    pub color_allocation: Option<vk::Allocation>,
     pub color_view: vk::ImageView,
 
     pub depth_image: vk::Image,
-    pub depth_allocation: Option<vma::Allocation>,
+    pub depth_allocation: Option<vk::Allocation>,
     pub depth_view: vk::ImageView,
 
     pub render_pass: vk::RenderPass,
@@ -150,12 +146,12 @@ pub struct VulkanData {
     pub framebuffers: Vec<vk::Framebuffer>,
 
     pub vertex_buffer: vk::Buffer,
-    pub vertex_buffer_allocation: vma::Allocation,
+    pub vertex_buffer_allocation: vk::Allocation,
     pub index_buffer: vk::Buffer,
-    pub index_buffer_allocation: vma::Allocation,
+    pub index_buffer_allocation: vk::Allocation,
 
     pub texture_image: vk::Image,
-    pub texture_allocation: vma::Allocation,
+    pub texture_allocation: vk::Allocation,
     pub texture_view: vk::ImageView,
     pub texture_sampler: vk::Sampler,
 
@@ -197,7 +193,7 @@ impl VulkanData {
                 get_image_views(&device, &swapchain_loader, &swapchain, surface_format);
             let (color_image, color_allocation, color_view) = get_color_resources(
                 &device,
-                &mut allocator.borrow_mut(),
+                &allocator,
                 surface_format,
                 msaa_samples,
                 image_extent,
@@ -206,7 +202,7 @@ impl VulkanData {
                 &instance,
                 &device,
                 &pdevice,
-                &mut allocator.borrow_mut(),
+                &allocator,
                 msaa_samples,
                 image_extent,
             );
@@ -227,25 +223,25 @@ impl VulkanData {
                 &device,
                 &queue,
                 &transient_command_pool,
-                &mut allocator.borrow_mut(),
+                &allocator,
                 &vertices,
             );
             let (index_buffer, index_buffer_allocation) = get_index_buffer(
                 &device,
                 &queue,
                 &transient_command_pool,
-                &mut allocator.borrow_mut(),
+                &allocator,
                 &indices,
             );
             let uniform_buffers =
-                get_uniform_buffers(&device, &mut allocator.borrow_mut(), frames_in_flight);
+                get_uniform_buffers(&device, &allocator, frames_in_flight);
             let (texture_image, texture_allocation, texture_view, texture_sampler) = get_texture(
                 &instance,
                 &pdevice,
                 &device,
                 &queue,
                 &transient_command_pool,
-                &mut allocator.borrow_mut(),
+                &allocator,
             );
             let (descriptor_pool, descriptor_sets) = get_descriptor_sets(
                 &device,
@@ -568,14 +564,12 @@ impl VulkanData {
         self.device.destroy_image_view(self.color_view, None);
         self.device.destroy_image(self.color_image, None);
         self.allocator
-            .borrow_mut()
             .free(self.color_allocation.take().unwrap())
             .unwrap();
 
         self.device.destroy_image_view(self.depth_view, None);
         self.device.destroy_image(self.depth_image, None);
         self.allocator
-            .borrow_mut()
             .free(self.depth_allocation.take().unwrap())
             .unwrap();
 
@@ -608,7 +602,7 @@ impl VulkanData {
 
         let (color_image, color_allocation, color_view) = get_color_resources(
             &self.device,
-            &mut self.allocator.borrow_mut(),
+            &self.allocator,
             self.surface_format,
             self.msaa_samples,
             image_extent,
@@ -618,7 +612,7 @@ impl VulkanData {
             &self.instance,
             &self.device,
             &self.pdevice,
-            &mut self.allocator.borrow_mut(),
+            &self.allocator,
             self.msaa_samples,
             image_extent,
         );
@@ -824,8 +818,8 @@ unsafe fn get_pdevice_suitability(
     }
 
     let priority = match properties.device_type {
-        PhysicalDeviceType::DISCRETE_GPU => 0,
-        PhysicalDeviceType::INTEGRATED_GPU => 1,
+        vk::PhysicalDeviceType::DISCRETE_GPU => 0,
+        vk::PhysicalDeviceType::INTEGRATED_GPU => 1,
         _ => i32::MAX,
     };
 
@@ -891,8 +885,8 @@ unsafe fn get_allocator(
     instance: &Instance,
     device: &Device,
     pdevice: &vk::PhysicalDevice,
-) -> RefCell<vma::Allocator> {
-    let allocator_create_info = vma::AllocatorCreateDesc {
+) -> Allocator {
+    let allocator_create_info = vk::AllocatorCreateInfo {
         physical_device: *pdevice,
         device: device.clone(),
         instance: instance.clone(),
@@ -900,7 +894,7 @@ unsafe fn get_allocator(
         buffer_device_address: false,
     };
 
-    RefCell::new(vma::Allocator::new(&allocator_create_info).unwrap())
+    Allocator::new(&allocator_create_info).unwrap()
 }
 
 unsafe fn get_surface_properties(
@@ -1294,11 +1288,11 @@ unsafe fn get_framebuffers(
 
 unsafe fn create_buffer(
     device: &Device,
-    allocator: &mut vma::Allocator,
+    allocator: &Allocator,
     size: u64,
     usage: vk::BufferUsageFlags,
-    location: VmaMemoryLocation,
-) -> (vk::Buffer, vma::Allocation, vk::MemoryRequirements) {
+    location: vk::MemoryLocation,
+) -> (vk::Buffer, vk::Allocation, vk::MemoryRequirements) {
     let buffer_create_info = vk::BufferCreateInfo::builder()
         .size(size)
         .usage(usage)
@@ -1307,17 +1301,17 @@ unsafe fn create_buffer(
     let buffer = device.create_buffer(&buffer_create_info, None).unwrap();
     let requirements = device.get_buffer_memory_requirements(buffer);
 
-    let allocation_create_info = vma::AllocationCreateDesc {
+    let allocation_create_info = vk::AllocationCreateInfo {
         name: "UNNAMED BUFFER",
         requirements,
         location,
         linear: true,
-        allocation_scheme: vma::AllocationScheme::DedicatedBuffer(buffer),
+        allocation_scheme: vk::AllocationScheme::GpuAllocatorManaged,
     };
 
     let allocation = allocator.allocate(&allocation_create_info).unwrap();
     device
-        .bind_buffer_memory(buffer, allocation.memory(), allocation.offset())
+        .bind_buffer_memory(buffer, allocator.get_memory(allocation).unwrap(), allocator.get_offset(allocation).unwrap())
         .unwrap();
     (buffer, allocation, requirements)
 }
@@ -1328,7 +1322,7 @@ struct ImageCreateInfo {
     pub format: vk::Format,
     pub tiling: vk::ImageTiling,
     pub usage: vk::ImageUsageFlags,
-    pub location: VmaMemoryLocation,
+    pub location: vk::MemoryLocation,
     pub mip_levels: u32,
     pub samples: vk::SampleCountFlags,
 }
@@ -1341,7 +1335,7 @@ impl Default for ImageCreateInfo {
             format: vk::Format::UNDEFINED,
             tiling: vk::ImageTiling::LINEAR,
             usage: vk::ImageUsageFlags::empty(),
-            location: VmaMemoryLocation::Unknown,
+            location: vk::MemoryLocation::Unknown,
             mip_levels: 1,
             samples: vk::SampleCountFlags::TYPE_1,
         }
@@ -1350,9 +1344,9 @@ impl Default for ImageCreateInfo {
 
 unsafe fn create_image(
     device: &Device,
-    allocator: &mut vma::Allocator,
+    allocator: &Allocator,
     create_info: ImageCreateInfo,
-) -> (vk::Image, vma::Allocation, vk::MemoryRequirements) {
+) -> (vk::Image, vk::Allocation, vk::MemoryRequirements) {
     let texture_image_create_info = vk::ImageCreateInfo::builder()
         .image_type(vk::ImageType::TYPE_2D)
         .extent(vk::Extent3D {
@@ -1374,17 +1368,17 @@ unsafe fn create_image(
         .unwrap();
     let requirements = device.get_image_memory_requirements(image);
 
-    let allocation_create_info = vma::AllocationCreateDesc {
+    let allocation_create_info = vk::AllocationCreateInfo {
         name: "UNNAMED IMAGE",
         requirements,
         location: create_info.location,
         linear: true,
-        allocation_scheme: vma::AllocationScheme::DedicatedImage(image),
+        allocation_scheme: vk::AllocationScheme::GpuAllocatorManaged,
     };
 
     let allocation = allocator.allocate(&allocation_create_info).unwrap();
     device
-        .bind_image_memory(image, allocation.memory(), allocation.offset())
+        .bind_image_memory(image, allocator.get_memory(allocation).unwrap(), allocator.get_offset(allocation).unwrap())
         .unwrap();
 
     (image, allocation, requirements)
@@ -1547,15 +1541,16 @@ unsafe fn transition_image_layout(
 
 unsafe fn map_to_buffer<T: Copy>(
     device: &Device,
-    allocation: &vma::Allocation,
+    allocator: &Allocator,
+    allocation: vk::Allocation,
     requirements: vk::MemoryRequirements,
     slice: &[T],
 ) {
-    let ptr = match allocation.mapped_ptr() {
-        Some(mut ptr) => ptr.as_mut(),
-        None => device
+    let ptr = match allocator.get_mapped_ptr(allocation) {
+        Ok(mut ptr) => ptr.as_mut(),
+        _ => device
             .map_memory(
-                allocation.memory(),
+                allocator.get_memory(allocation).unwrap(),
                 0,
                 requirements.size,
                 vk::MemoryMapFlags::empty(),
@@ -1565,21 +1560,22 @@ unsafe fn map_to_buffer<T: Copy>(
 
     let mut align = Align::new(ptr, std::mem::align_of::<T>() as u64, requirements.size);
     align.copy_from_slice(slice);
-    if allocation.mapped_ptr().is_none() {
-        device.unmap_memory(allocation.memory());
+    if allocator.get_mapped_ptr(allocation).is_err() {
+        device.unmap_memory(allocator.get_memory(allocation).unwrap());
     }
 }
 
 unsafe fn persistent_map_to_buffer<T>(
     device: &Device,
-    allocation: &vma::Allocation,
+    allocator: &Allocator,
+    allocation: vk::Allocation,
     requirements: vk::MemoryRequirements,
 ) -> Align<T> {
-    let ptr = match allocation.mapped_ptr() {
-        Some(mut ptr) => ptr.as_mut(),
-        None => device
+    let ptr = match allocator.get_mapped_ptr(allocation) {
+        Ok(mut ptr) => ptr.as_mut(),
+        _ => device
             .map_memory(
-                allocation.memory(),
+                allocator.get_memory(allocation).unwrap(),
                 0,
                 requirements.size,
                 vk::MemoryMapFlags::empty(),
@@ -1741,8 +1737,8 @@ unsafe fn get_texture(
     device: &Device,
     queue: &vk::Queue,
     command_pool: &vk::CommandPool,
-    allocator: &mut vma::Allocator,
-) -> (vk::Image, vma::Allocation, vk::ImageView, vk::Sampler) {
+    allocator: &Allocator,
+) -> (vk::Image, vk::Allocation, vk::ImageView, vk::Sampler) {
     let texture = image::open("src/textures/viking_room.png")
         .unwrap()
         .into_rgba8();
@@ -1757,11 +1753,12 @@ unsafe fn get_texture(
         allocator,
         size,
         vk::BufferUsageFlags::TRANSFER_SRC,
-        VmaMemoryLocation::CpuToGpu,
+        vk::MemoryLocation::CpuToGpu,
     );
     map_to_buffer(
         device,
-        &src_allocation,
+        allocator,
+        src_allocation,
         src_requirements,
         samples.as_slice(),
     );
@@ -1775,7 +1772,7 @@ unsafe fn get_texture(
         usage: vk::ImageUsageFlags::TRANSFER_DST
             | vk::ImageUsageFlags::TRANSFER_SRC
             | vk::ImageUsageFlags::SAMPLED,
-        location: VmaMemoryLocation::GpuOnly,
+        location: vk::MemoryLocation::GpuOnly,
         ..Default::default()
     };
 
@@ -1855,15 +1852,15 @@ unsafe fn get_vertex_buffer(
     device: &Device,
     queue: &vk::Queue,
     command_pool: &vk::CommandPool,
-    allocator: &mut vma::Allocator,
+    allocator: &Allocator,
     vertices: &[Vertex],
-) -> (vk::Buffer, vma::Allocation) {
+) -> (vk::Buffer, vk::Allocation) {
     let (src_buffer, src_allocation, src_requirements) = create_buffer(
         device,
         allocator,
         std::mem::size_of_val(vertices) as u64,
         vk::BufferUsageFlags::TRANSFER_SRC,
-        VmaMemoryLocation::CpuToGpu,
+        vk::MemoryLocation::CpuToGpu,
     );
 
     let (buffer, allocation, requirements) = create_buffer(
@@ -1871,10 +1868,10 @@ unsafe fn get_vertex_buffer(
         allocator,
         std::mem::size_of_val(vertices) as u64,
         vk::BufferUsageFlags::VERTEX_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
-        VmaMemoryLocation::GpuOnly,
+        vk::MemoryLocation::GpuOnly,
     );
 
-    map_to_buffer(device, &src_allocation, src_requirements, vertices);
+    map_to_buffer(device, allocator, src_allocation, src_requirements, vertices);
     copy_buffer(
         device,
         queue,
@@ -1894,15 +1891,15 @@ unsafe fn get_index_buffer(
     device: &Device,
     queue: &vk::Queue,
     command_pool: &vk::CommandPool,
-    allocator: &mut vma::Allocator,
+    allocator: &Allocator,
     indices: &[u32],
-) -> (vk::Buffer, vma::Allocation) {
+) -> (vk::Buffer, vk::Allocation) {
     let (src_buffer, src_allocation, src_requirements) = create_buffer(
         device,
         allocator,
         std::mem::size_of_val(indices) as u64,
         vk::BufferUsageFlags::TRANSFER_SRC,
-        VmaMemoryLocation::CpuToGpu,
+        vk::MemoryLocation::CpuToGpu,
     );
 
     let (buffer, allocation, requirements) = create_buffer(
@@ -1910,10 +1907,10 @@ unsafe fn get_index_buffer(
         allocator,
         std::mem::size_of_val(indices) as u64,
         vk::BufferUsageFlags::INDEX_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
-        VmaMemoryLocation::GpuOnly,
+        vk::MemoryLocation::GpuOnly,
     );
 
-    map_to_buffer(device, &src_allocation, src_requirements, indices);
+    map_to_buffer(device, allocator, src_allocation, src_requirements, indices);
     copy_buffer(
         device,
         queue,
@@ -1931,11 +1928,11 @@ unsafe fn get_index_buffer(
 
 unsafe fn get_color_resources(
     device: &Device,
-    allocator: &mut vma::Allocator,
+    allocator: &Allocator,
     surface_format: vk::SurfaceFormatKHR,
     msaa_samples: vk::SampleCountFlags,
     image_extent: vk::Extent2D,
-) -> (vk::Image, vma::Allocation, vk::ImageView) {
+) -> (vk::Image, vk::Allocation, vk::ImageView) {
     let color_format = surface_format.format;
 
     let image_create_info = ImageCreateInfo {
@@ -1945,7 +1942,7 @@ unsafe fn get_color_resources(
         samples: msaa_samples,
         tiling: vk::ImageTiling::OPTIMAL,
         usage: vk::ImageUsageFlags::TRANSIENT_ATTACHMENT | vk::ImageUsageFlags::COLOR_ATTACHMENT,
-        location: VmaMemoryLocation::GpuOnly,
+        location: vk::MemoryLocation::GpuOnly,
         ..Default::default()
     };
 
@@ -1966,10 +1963,10 @@ unsafe fn get_depth_resources(
     instance: &Instance,
     device: &Device,
     pdevice: &vk::PhysicalDevice,
-    allocator: &mut vma::Allocator,
+    allocator: &Allocator,
     msaa_samples: vk::SampleCountFlags,
     image_extent: vk::Extent2D,
-) -> (vk::Image, vma::Allocation, vk::ImageView, vk::Format) {
+) -> (vk::Image, vk::Allocation, vk::ImageView, vk::Format) {
     let format = find_supported_format(
         instance,
         pdevice,
@@ -1989,7 +1986,7 @@ unsafe fn get_depth_resources(
         format,
         tiling: vk::ImageTiling::OPTIMAL,
         usage: vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
-        location: VmaMemoryLocation::GpuOnly,
+        location: vk::MemoryLocation::GpuOnly,
         samples: msaa_samples,
         ..Default::default()
     };
@@ -2003,9 +2000,9 @@ unsafe fn get_depth_resources(
 
 unsafe fn get_uniform_buffers(
     device: &Device,
-    allocator: &mut vma::Allocator,
+    allocator: &Allocator,
     frames_in_flight: u32,
-) -> Vec<(vk::Buffer, vma::Allocation, Align<UniformBufferObject>)> {
+) -> Vec<(vk::Buffer, vk::Allocation, Align<UniformBufferObject>)> {
     (0..frames_in_flight)
         .map(|_| {
             let (buffer, allocation, requirements) = create_buffer(
@@ -2013,10 +2010,10 @@ unsafe fn get_uniform_buffers(
                 allocator,
                 std::mem::size_of::<UniformBufferObject>() as u64,
                 vk::BufferUsageFlags::UNIFORM_BUFFER,
-                VmaMemoryLocation::CpuToGpu,
+                vk::MemoryLocation::CpuToGpu,
             );
 
-            let persistent_mapping = persistent_map_to_buffer(device, &allocation, requirements);
+            let persistent_mapping = persistent_map_to_buffer(device, allocator, allocation, requirements);
 
             (buffer, allocation, persistent_mapping)
         })
@@ -2061,7 +2058,7 @@ unsafe fn get_descriptor_sets(
     descriptor_set_layout: &vk::DescriptorSetLayout,
     texture_view: &vk::ImageView,
     texture_sampler: &vk::Sampler,
-    uniform_buffers: &Vec<(vk::Buffer, vma::Allocation, Align<UniformBufferObject>)>,
+    uniform_buffers: &Vec<(vk::Buffer, vk::Allocation, Align<UniformBufferObject>)>,
 ) -> (vk::DescriptorPool, Vec<vk::DescriptorSet>) {
     let frames_in_flight = uniform_buffers.len() as u32;
 
