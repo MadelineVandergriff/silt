@@ -1,10 +1,28 @@
-use std::{cell::RefCell, collections::HashMap, num::NonZeroU64, ptr::NonNull, ffi::c_void};
+pub use ash::extensions::{
+    ext::DebugUtils,
+    khr::{Surface, Swapchain},
+};
+pub use ash::{
+    util::{Align, AlignIter},
+    Device, Entry, Instance,
+};
+pub use winit::window::Window;
+
+use anyhow::{anyhow, Result};
+use std::{
+    cell::{Cell, RefCell, Ref},
+    collections::HashMap,
+    ffi::c_void,
+    num::NonZeroU64,
+    ptr::NonNull, ops::Deref,
+};
+use uuid::Uuid;
+use winit::{
+    event::Event,
+    event_loop::{ControlFlow, EventLoop, EventLoopWindowTarget},
+};
 
 use crate::vk;
-use anyhow::{anyhow, Result};
-pub use ash::{Device, Entry, Instance};
-pub use ash::extensions::{ext::DebugUtils, khr::{Surface, Swapchain}};
-use uuid::Uuid;
 
 /// Subset of gpu_allocator::vulkan::Allocator with managed allocation handles
 pub struct Allocator {
@@ -31,12 +49,10 @@ impl Allocator {
         allocation: vk::Allocation,
         f: impl FnOnce(&gpu_allocator::vulkan::Allocation) -> Result<T>,
     ) -> Result<T> {
-        f(self.allocations.borrow().get(&allocation).ok_or(
-            anyhow!(
-                "Allocation {} not found, possible use after free",
-                Uuid::from(allocation).as_urn()
-            ),
-        )?)
+        f(self.allocations.borrow().get(&allocation).ok_or(anyhow!(
+            "Allocation {} not found, possible use after free",
+            Uuid::from(allocation).as_urn()
+        ))?)
     }
 
     pub fn new(desc: &vk::AllocatorCreateInfo) -> Result<Self> {
@@ -74,7 +90,9 @@ impl Allocator {
     }
 
     pub fn get_chunk_id(&self, allocation: vk::Allocation) -> Result<NonZeroU64> {
-        self.with_result(allocation, |a| a.chunk_id().ok_or(anyhow!("could not obtain chunk id")))
+        self.with_result(allocation, |a| {
+            a.chunk_id().ok_or(anyhow!("could not obtain chunk id"))
+        })
     }
 
     pub fn get_memory(&self, allocation: vk::Allocation) -> Result<vk::DeviceMemory> {
@@ -94,10 +112,42 @@ impl Allocator {
     }
 
     pub fn get_mapped_ptr(&self, allocation: vk::Allocation) -> Result<NonNull<c_void>> {
-        self.with_result(allocation, |a| a.mapped_ptr().ok_or(anyhow!("memory not host visible")))
+        self.with_result(allocation, |a| {
+            a.mapped_ptr().ok_or(anyhow!("memory not host visible"))
+        })
     }
 
     pub fn get_is_null(&self, allocation: vk::Allocation) -> Result<bool> {
         self.with(allocation, gpu_allocator::vulkan::Allocation::is_null)
+    }
+}
+
+pub struct Context {
+    inner: RefCell<Option<EventLoop<()>>>,
+}
+
+impl Context {
+    pub fn new() -> Self {
+        Self {
+            inner: RefCell::new(Some(EventLoop::new())),
+        }
+    }
+
+    pub fn take(&self) -> Self {
+        let inner = self.inner.take().unwrap();
+        Self {
+            inner: RefCell::new(Some(inner)),
+        }
+    }
+
+    pub fn run<F>(self, event_handler: F)
+    where
+        F: 'static + FnMut(Event<'_, ()>, &EventLoopWindowTarget<()>, &mut ControlFlow),
+    {
+        self.inner.into_inner().unwrap().run(event_handler);
+    }
+    
+    pub fn as_ref(&self) -> Ref<'_, Option<EventLoop<()>>> {
+        self.inner.borrow()
     }
 }
