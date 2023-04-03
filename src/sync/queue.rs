@@ -1,3 +1,4 @@
+use crate::loader::PhysicalDeviceInfo;
 use crate::prelude::*;
 use crate::vk;
 use anyhow::{anyhow, Result};
@@ -71,29 +72,88 @@ pub struct QueueHandles {
     pub family: u32,
 }
 
-impl QueueType {
-    pub fn suitability(&self) -> Result<QueueProperties> {
-        match self {
-            QueueType::Graphics => {}
-            QueueType::Compute => {}
-            QueueType::Transfer => {}
-            QueueType::SparseBinding => {}
-        };
-        Err(anyhow!(""))
+impl QueueRequest {
+    pub fn suitability(
+        &self,
+        instance: &Instance,
+        info: &PhysicalDeviceInfo,
+    ) -> Result<QueueProperties> {
+        info.queues
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, &prop)| {
+                match self.ty {
+                    QueueType::Graphics => {
+                        if prop.queue_flags.contains(vk::QueueFlags::GRAPHICS) {
+                            if prop.queue_flags.contains(vk::QueueFlags::COMPUTE) {
+                                return Some((1, idx, prop)); // Combined graphics and compute
+                            } else {
+                                return Some((0, idx, prop)); // Dedicated grpahics queue
+                            }
+                        }
+                    }
+                    QueueType::Compute => {
+                        if prop.queue_flags.contains(vk::QueueFlags::COMPUTE) {
+                            if prop.queue_flags.contains(vk::QueueFlags::GRAPHICS) {
+                                return Some((1, idx, prop)); // Combined graphics and compute
+                            } else {
+                                return Some((0, idx, prop)); // Dedicated compute queue
+                            }
+                        }
+                    }
+                    QueueType::Transfer => {
+                        if prop.queue_flags.contains(vk::QueueFlags::TRANSFER) {
+                            if prop.queue_flags.contains(vk::QueueFlags::GRAPHICS) {
+                                return Some((2, idx, prop)); // Combined transfer and graphics
+                            } else if prop.queue_flags.contains(vk::QueueFlags::COMPUTE) {
+                                return Some((1, idx, prop)); // Combined transfer and compute
+                            } else {
+                                return Some((0, idx, prop)); // Dedicated compute queue
+                            }
+                        }
+                    }
+                    QueueType::SparseBinding => {
+                        if prop
+                            .queue_flags
+                            .contains(vk::QueueFlags::TRANSFER | vk::QueueFlags::SPARSE_BINDING)
+                        {
+                            if prop.queue_flags.contains(vk::QueueFlags::GRAPHICS) {
+                                return Some((2, idx, prop)); // Combined sparse binding and graphics
+                            } else if prop.queue_flags.contains(vk::QueueFlags::COMPUTE) {
+                                return Some((1, idx, prop)); // Combined sparse binding and compute
+                            } else {
+                                return Some((0, idx, prop)); // Dedicated sparse binding queue
+                            }
+                        }
+                    }
+                };
+                None
+            })
+            .sorted_by_cached_key(|(priority, _, _)| *priority)
+            .map(|(_, idx, prop)| QueueProperties {
+                ty: self.ty,
+                count: self.count,
+                family: idx as u32,
+                props: prop,
+            })
+            .next()
+            .ok_or(anyhow!(
+                "could not find suitable queue on the selected device"
+            ))
     }
 }
 
-pub fn get_queue_ci(
-    properties: Vec<QueueProperties>,
+pub fn get_device_queues(
     instance: &Instance,
+    properties: Vec<QueueProperties>,
     pdevice: vk::PhysicalDevice,
     builder: vk::DeviceCreateInfoBuilder<'_>,
-) -> () {
+) -> Result<(Device, Vec<QueueHandles>)> {
     let max_queue_count = properties
         .iter()
-        .map(|&prop| prop.props.queue_count)
+        .map(|prop| prop.props.queue_count)
         .max()
-        .unwrap();
+        .ok_or(anyhow!("no queues requested. you,,, you need queues to do things bestie"))?;
     let priorities = vec![1.0; max_queue_count as usize];
 
     let mut queue_allocators = properties
@@ -117,7 +177,7 @@ pub fn get_queue_ci(
         .collect_vec();
 
     let device_ci = builder.queue_create_infos(&queue_ci[..]);
-    let device = unsafe { instance.create_device(pdevice, &device_ci, None).unwrap() };
+    let device = unsafe { instance.create_device(pdevice, &device_ci, None)? };
 
     let queues = properties
         .into_iter()
@@ -137,4 +197,6 @@ pub fn get_queue_ci(
             }
         })
         .collect_vec();
+
+    Ok((device, queues))
 }

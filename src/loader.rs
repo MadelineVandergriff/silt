@@ -6,6 +6,7 @@ use std::ffi::CStr;
 use std::ffi::CString;
 
 use crate::prelude::*;
+use crate::sync::get_device_queues;
 use crate::sync::{QueueHandles, QueueRequest, QueueType};
 use crate::vk;
 use anyhow::{anyhow, Result};
@@ -15,9 +16,11 @@ use raw_window_handle::HasRawWindowHandle;
 use winit::window::WindowBuilder;
 
 pub struct LoaderCreateInfo {
-    width: u32,
-    height: u32,
-    title: String,
+    pub width: u32,
+    pub height: u32,
+    pub title: String,
+    pub device_features: DeviceFeaturesRequest,
+    pub queue_requests: Vec<QueueRequest>,
 }
 
 pub struct Loader {
@@ -42,8 +45,8 @@ impl Loader {
             let (entry, instance) = get_instance(&window, &loader_ci.title)?;
             let (debug, debug_handle) = get_debug_hooks(&entry, &instance)?;
             let (surface, surface_handle) = get_surface(&window, &entry, &instance)?;
-            let (pdevice_handle, device, queue_idx) =
-                get_device(&instance, &surface, surface_handle, vec![])?;
+            let (pdevice_handle, device, queue_handles) =
+                get_device(&instance, &surface, surface_handle, loader_ci.queue_requests, loader_ci.device_features)?;
             let allocator = get_allocator(&instance, &device, pdevice_handle)?;
             let swapchain = Swapchain::new(&instance, &device);
 
@@ -168,11 +171,11 @@ unsafe fn get_surface(
     Ok((surface_loader, surface))
 }
 
-struct DeviceInfo {
-    pdevice: vk::PhysicalDevice,
-    queues: Vec<vk::QueueFamilyProperties>,
-    properties: vk::PhysicalDeviceProperties,
-    features: vk::PhysicalDeviceFeatures,
+pub struct PhysicalDeviceInfo {
+    pub pdevice: vk::PhysicalDevice,
+    pub queues: Vec<vk::QueueFamilyProperties>,
+    pub properties: vk::PhysicalDeviceProperties,
+    pub features: vk::PhysicalDeviceFeatures,
 }
 
 unsafe fn get_device(
@@ -181,7 +184,11 @@ unsafe fn get_device(
     surface: vk::SurfaceKHR,
     queue_requests: Vec<QueueRequest>,
     device_features: DeviceFeaturesRequest,
-) -> Result<(vk::PhysicalDevice, Device, u32)> {
+) -> Result<(vk::PhysicalDevice, Device, Vec<QueueHandles>)> {
+    if queue_requests.is_empty() {
+        return Err(anyhow!("no queues requested. you,,, you need queues to do things bestie"))
+    }
+
     let (info, queues, enabled_features) = instance
         .enumerate_physical_devices()?
         .into_iter()
@@ -190,7 +197,7 @@ unsafe fn get_device(
             let properties = instance.get_physical_device_properties(pdevice);
             let features = instance.get_physical_device_features(pdevice);
 
-            DeviceInfo {
+            PhysicalDeviceInfo {
                 pdevice,
                 queues,
                 properties,
@@ -206,8 +213,8 @@ unsafe fn get_device(
         })
         .filter_map(|info| {
             let (queues, failures) = queue_requests
-                .into_iter()
-                .map(|request| request.ty.suitability())
+                .iter()
+                .map(|request| request.suitability(instance, &info))
                 .partition_result::<Vec<_>, Vec<_>, _, _>();
 
             if !failures.is_empty() {
@@ -248,19 +255,13 @@ unsafe fn get_device(
         vk::KhrPortabilitySubsetFn::name().as_ptr(),
     ];
 
-    let queue_priorities = [1.0];
-    let queue_create_info = vk::DeviceQueueCreateInfo::builder()
-        .queue_family_index(queue_family_index.into())
-        .queue_priorities(&queue_priorities);
-
-    let device_create_info = vk::DeviceCreateInfo::builder()
+    let device_ci = vk::DeviceCreateInfo::builder()
         .enabled_extension_names(&device_extensions_raw)
-        .enabled_features(&enabled_features)
-        .queue_create_infos(std::slice::from_ref(&queue_create_info));
+        .enabled_features(&enabled_features);
 
-    let device = instance.create_device(info.pdevice, &device_create_info, None)?;
+    let (device, queue_handles) = get_device_queues(instance, queues, info.pdevice, device_ci)?;
 
-    Ok((info.pdevice, device, queue_family_index))
+    Ok((info.pdevice, device, queue_handles))
 }
 
 unsafe fn get_allocator(

@@ -1,15 +1,21 @@
-use silt::model_loading;
-use std::time::Instant;
-use color_eyre::eyre::Result;
-use once_cell::sync::Lazy;
+use silt::prelude::*;
+use silt::loader::*;
+use silt::sync::{QueueRequest, QueueType};
 
-static START_TIME: Lazy<Instant> = Lazy::new(|| Instant::now());
+fn main() {
+    let loader_ci = LoaderCreateInfo {
+        width: 1920,
+        height: 1080,
+        title: "Silt Example".into(),
+        device_features: DeviceFeaturesRequest {
+            required: DeviceFeatures::SAMPLER_ANISOTROPY,
+            prefered: DeviceFeatures::IMAGE_CUBE_ARRAY | DeviceFeatures::SPARSE_BINDING
+        },
+        queue_requests: vec![
+            QueueRequest { ty: QueueType::Graphics, count: 2 }
+        ],
+    };
 
-fn main() -> Result<()> {
-    Lazy::force(&START_TIME);
-    let triangle3 = model_loading::VulkanData::new();
-    println!("Elapsed: {:.3}s", START_TIME.elapsed().as_secs_f32());
-    triangle3.run();
-
-    Ok(())
+    let loader = Loader::new(loader_ci).unwrap();
+    std::thread::sleep(std::time::Duration::from_secs(1));
 }
