@@ -1033,7 +1033,7 @@ unsafe fn get_image_views(
 }
 
 unsafe fn get_shader_module(device: &Device, name: impl AsRef<str>) -> vk::ShaderModule {
-    let code: Vec<u32> = shader!(name.as_ref(), ShaderOptions::CACHE).unwrap().into();
+    let code: Vec<u32> = shader!(name.as_ref(), ShaderOptions::CACHE | ShaderOptions::HLSL).unwrap().into();
     let shader_module_create_info = vk::ShaderModuleCreateInfo::builder().code(&code[..]);
 
     device
@@ -1139,8 +1139,8 @@ unsafe fn get_pipeline(
     vk::PipelineLayout,
     vk::Pipeline,
 ) {
-    let vertex_shader_module = get_shader_module(device, "src/shaders/texture_mapping.vert");
-    let fragment_shader_module = get_shader_module(device, "src/shaders/texture_mapping.frag");
+    let vertex_shader_module = get_shader_module(device, "src/shaders/model_loading.vert");
+    let fragment_shader_module = get_shader_module(device, "src/shaders/model_loading.frag");
 
     let vertex_stage_create_info = vk::PipelineShaderStageCreateInfo::builder()
         .stage(vk::ShaderStageFlags::VERTEX)

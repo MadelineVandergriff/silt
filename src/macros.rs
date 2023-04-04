@@ -3,7 +3,7 @@ use ash::util::read_spv;
 use bitflags::bitflags;
 use derive_more::Into;
 use once_cell::sync::Lazy;
-use shaderc::Compiler;
+use shaderc::{Compiler, CompileOptions};
 pub use shaderc::ShaderKind;
 use std::fs;
 use std::io::Cursor;
@@ -36,6 +36,14 @@ pub fn __get_shader_code(
     invocation_path: PathBuf,
 ) -> Result<ShaderCode> {
     let cache_enabled = options.contains(ShaderOptions::CACHE) && cfg!(target_os = "linux");
+    let compile_options = if options.contains(ShaderOptions::HLSL) {
+        let mut options = CompileOptions::new().unwrap();
+        options.set_source_language(shaderc::SourceLanguage::HLSL);
+        Some(options)
+    } else {
+        None
+    };
+
     let flat_path = String::from(path).replace("/", "_");
     let spirv_path = String::from("/tmp/silt_") + &flat_path + ".spirv";
     let copy_path = String::from("/tmp/silt_") + &flat_path;
@@ -55,7 +63,7 @@ pub fn __get_shader_code(
 
     let shader_kind = get_kind(path).ok_or(anyhow!("failed to determine shader type"))?;
     let spirv = SHADERC_COMPILER
-        .compile_into_spirv(text, shader_kind, path, "main", None)
+        .compile_into_spirv(text, shader_kind, path, "main", compile_options.as_ref())
         ?;
     let code = read_spv(&mut Cursor::new(spirv.as_binary_u8()))?;
 
@@ -81,6 +89,7 @@ bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
     pub struct ShaderOptions: u32 {
         const CACHE = 0b00000001;
+        const HLSL  = 0b00000010;
     }
 }
 

@@ -1,7 +1,7 @@
 use silt::loader::*;
 use silt::sync::{QueueRequest, QueueType};
 
-fn main() {
+/*fn main() {
     let loader_ci = LoaderCreateInfo {
         width: 1920,
         height: 1080,
@@ -17,4 +17,9 @@ fn main() {
 
     let (loader, handles) = Loader::new(loader_ci).unwrap();
     std::thread::sleep(std::time::Duration::from_secs(1));
+}*/
+
+fn main() {
+    let silt = silt::model_loading::VulkanData::new();
+    silt.run();
 }
