@@ -22,7 +22,7 @@ use winit::{
     event_loop::{ControlFlow, EventLoop, EventLoopWindowTarget},
 };
 
-use crate::vk;
+pub use crate::vk;
 
 /// Subset of gpu_allocator::vulkan::Allocator with managed allocation handles
 pub struct Allocator {

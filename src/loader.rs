@@ -7,7 +7,6 @@ use std::ffi::CStr;
 use crate::prelude::*;
 use crate::sync::get_device_queues;
 use crate::sync::{QueueHandles, QueueRequest, QueueType};
-use crate::vk;
 use anyhow::{anyhow, Result};
 use itertools::Itertools;
 use raw_window_handle::HasRawDisplayHandle;
