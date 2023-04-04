@@ -3,7 +3,6 @@ pub use device_features::*;
 
 use std::borrow::Cow;
 use std::ffi::CStr;
-use std::ffi::CString;
 
 use crate::prelude::*;
 use crate::sync::get_device_queues;
@@ -24,43 +23,61 @@ pub struct LoaderCreateInfo {
 }
 
 pub struct Loader {
-    window: Window,
-    context: Context,
-    entry: Entry,
-    instance: Instance,
-    debug: DebugUtils,
-    surface: Surface,
-    device: Device,
-    allocator: Allocator,
-    swapchain: Swapchain,
+    pub window: Window,
+    pub context: Context,
+    pub entry: Entry,
+    pub instance: Instance,
+    pub debug: DebugUtils,
+    pub surface: Surface,
+    pub device: Device,
+    pub allocator: Allocator,
+    pub swapchain: Swapchain,
 }
 
-pub struct LoaderHandles {}
+pub struct LoaderHandles {
+    pub debug_messenger: vk::DebugUtilsMessengerEXT,
+    pub surface: vk::SurfaceKHR,
+    pub pdevice: vk::PhysicalDevice,
+    pub queues: Vec<QueueHandles>,
+}
 
 impl Loader {
-    pub fn new(loader_ci: LoaderCreateInfo) -> Result<Self> {
+    pub fn new(loader_ci: LoaderCreateInfo) -> Result<(Self, LoaderHandles)> {
         unsafe {
             let (window, context) =
                 get_window(loader_ci.width, loader_ci.height, &loader_ci.title)?;
             let (entry, instance) = get_instance(&window, &loader_ci.title)?;
             let (debug, debug_handle) = get_debug_hooks(&entry, &instance)?;
             let (surface, surface_handle) = get_surface(&window, &entry, &instance)?;
-            let (pdevice_handle, device, queue_handles) =
-                get_device(&instance, &surface, surface_handle, loader_ci.queue_requests, loader_ci.device_features)?;
+            let (pdevice_handle, device, queue_handles) = get_device(
+                &instance,
+                &surface,
+                surface_handle,
+                loader_ci.queue_requests,
+                loader_ci.device_features,
+            )?;
             let allocator = get_allocator(&instance, &device, pdevice_handle)?;
             let swapchain = Swapchain::new(&instance, &device);
 
-            Ok(Self {
-                window,
-                context,
-                entry,
-                instance,
-                debug,
-                surface,
-                device,
-                allocator,
-                swapchain,
-            })
+            Ok((
+                Self {
+                    window,
+                    context,
+                    entry,
+                    instance,
+                    debug,
+                    surface,
+                    device,
+                    allocator,
+                    swapchain,
+                },
+                LoaderHandles {
+                    debug_messenger: debug_handle,
+                    surface: surface_handle,
+                    pdevice: pdevice_handle,
+                    queues: queue_handles,
+                },
+            ))
         }
     }
 }
@@ -186,7 +203,9 @@ unsafe fn get_device(
     device_features: DeviceFeaturesRequest,
 ) -> Result<(vk::PhysicalDevice, Device, Vec<QueueHandles>)> {
     if queue_requests.is_empty() {
-        return Err(anyhow!("no queues requested. you,,, you need queues to do things bestie"))
+        return Err(anyhow!(
+            "no queues requested. you,,, you need queues to do things bestie"
+        ));
     }
 
     let (info, queues, enabled_features) = instance
@@ -214,7 +233,7 @@ unsafe fn get_device(
         .filter_map(|info| {
             let (queues, failures) = queue_requests
                 .iter()
-                .map(|request| request.suitability(instance, &info))
+                .map(|request| request.suitability(&info))
                 .partition_result::<Vec<_>, Vec<_>, _, _>();
 
             if !failures.is_empty() {
@@ -230,7 +249,8 @@ unsafe fn get_device(
                 return None;
             }
 
-            let enabled_features = (supported_features & (device_features.prefered | device_features.required)).into();
+            let enabled_features =
+                (supported_features & (device_features.prefered | device_features.required)).into();
 
             let graphics_family = queues
                 .iter()

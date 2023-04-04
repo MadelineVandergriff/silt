@@ -75,7 +75,6 @@ pub struct QueueHandles {
 impl QueueRequest {
     pub fn suitability(
         &self,
-        instance: &Instance,
         info: &PhysicalDeviceInfo,
     ) -> Result<QueueProperties> {
         info.queues

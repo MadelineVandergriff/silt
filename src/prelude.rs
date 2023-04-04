@@ -10,11 +10,11 @@ pub use winit::window::Window;
 
 use anyhow::{anyhow, Result};
 use std::{
-    cell::{Cell, RefCell, Ref},
+    cell::{RefCell, Ref},
     collections::HashMap,
     ffi::c_void,
     num::NonZeroU64,
-    ptr::NonNull, ops::Deref,
+    ptr::NonNull,
 };
 use uuid::Uuid;
 use winit::{

@@ -1,0 +1,119 @@
+use itertools::Itertools;
+
+use crate::loader::Loader;
+use crate::storage::image::Image;
+use crate::vk;
+
+pub struct SwapFrame {
+    pub image: vk::Image,
+    pub view: vk::ImageView,
+    pub framebuffer: vk::Framebuffer,
+}
+
+pub struct Swapchain {
+    pub swapchain: vk::SwapchainKHR,
+    pub extent: vk::Extent2D,
+    pub depth: Image,
+    pub color: Image,
+    pub frames: Vec<SwapFrame>,
+}
+
+impl Swapchain {
+    pub fn new(
+        loader: &Loader,
+        surface: vk::SurfaceKHR,
+        pdevice: vk::PhysicalDevice,
+        width: u32,
+        height: u32,
+    ) -> Self {
+        unsafe {
+            let surface_capabilities = loader
+                .surface
+                .get_physical_device_surface_capabilities(pdevice, surface)
+                .unwrap();
+            let surface_format = loader
+                .surface
+                .get_physical_device_surface_formats(pdevice, surface)
+                .unwrap()
+                .into_iter()
+                .find_or_first(|&format| format.format == vk::Format::B8G8R8A8_SRGB)
+                .unwrap();
+            let present_mode = loader
+                .surface
+                .get_physical_device_surface_present_modes(pdevice, surface)
+                .unwrap()
+                .into_iter()
+                .find(|&mode| mode == vk::PresentModeKHR::MAILBOX)
+                .unwrap_or(vk::PresentModeKHR::FIFO);
+
+            let image_count = match surface_capabilities.max_image_count {
+                0 => surface_capabilities.min_image_count + 1,
+                max => (surface_capabilities.min_image_count + 1).min(max),
+            };
+
+            let image_extent = match surface_capabilities.current_extent.width {
+                std::u32::MAX => vk::Extent2D { width, height },
+                _ => surface_capabilities.current_extent,
+            };
+
+            let pre_transform = if surface_capabilities
+                .supported_transforms
+                .contains(vk::SurfaceTransformFlagsKHR::IDENTITY)
+            {
+                vk::SurfaceTransformFlagsKHR::IDENTITY
+            } else {
+                surface_capabilities.current_transform
+            };
+
+            let swapchain_create_info = vk::SwapchainCreateInfoKHR::builder()
+                .surface(surface)
+                .image_extent(image_extent)
+                .min_image_count(image_count)
+                .image_color_space(surface_format.color_space)
+                .image_format(surface_format.format)
+                .present_mode(present_mode)
+                .pre_transform(pre_transform)
+                .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT)
+                .image_sharing_mode(vk::SharingMode::EXCLUSIVE)
+                .composite_alpha(vk::CompositeAlphaFlagsKHR::OPAQUE)
+                .clipped(true)
+                .image_array_layers(1);
+
+            let swapchain = loader
+                .swapchain
+                .create_swapchain(&swapchain_create_info, None)
+                .unwrap();
+
+            let images = loader.swapchain.get_swapchain_images(swapchain).unwrap();
+
+            let image_views = images
+                .iter()
+                .map(|&img| {
+                    let image_view_create_info = vk::ImageViewCreateInfo::builder()
+                        .format(surface_format.format)
+                        .view_type(vk::ImageViewType::TYPE_2D)
+                        .components(vk::ComponentMapping {
+                            r: vk::ComponentSwizzle::R,
+                            g: vk::ComponentSwizzle::G,
+                            b: vk::ComponentSwizzle::B,
+                            a: vk::ComponentSwizzle::A,
+                        })
+                        .subresource_range(vk::ImageSubresourceRange {
+                            aspect_mask: vk::ImageAspectFlags::COLOR,
+                            base_mip_level: 0,
+                            level_count: 1,
+                            base_array_layer: 0,
+                            layer_count: 1,
+                        })
+                        .image(img);
+                    loader
+                        .device
+                        .create_image_view(&image_view_create_info, None)
+                        .unwrap()
+                })
+                .collect::<Vec<_>>();
+        }
+
+        panic!()
+    }
+}

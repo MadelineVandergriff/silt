@@ -1,4 +1,3 @@
-use silt::prelude::*;
 use silt::loader::*;
 use silt::sync::{QueueRequest, QueueType};
 
@@ -16,6 +15,6 @@ fn main() {
         ],
     };
 
-    let loader = Loader::new(loader_ci).unwrap();
+    let (loader, handles) = Loader::new(loader_ci).unwrap();
     std::thread::sleep(std::time::Duration::from_secs(1));
 }
