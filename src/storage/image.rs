@@ -1,6 +1,7 @@
 use crate::{prelude::*, loader::Loader};
 use anyhow::Result;
 
+#[derive(Debug, Clone)]
 pub struct Image {
     pub image: vk::Image,
     pub view: vk::ImageView,

@@ -5,12 +5,14 @@ use crate::loader::Loader;
 use crate::prelude::*;
 use crate::storage::image::{self, Image, ImageCreateInfo};
 
+#[derive(Debug, Clone)]
 pub struct SwapFrame {
     pub image: vk::Image,
     pub view: vk::ImageView,
     pub framebuffer: vk::Framebuffer,
 }
 
+#[derive(Debug, Clone)]
 pub struct Swapchain {
     pub swapchain: vk::SwapchainKHR,
     pub extent: vk::Extent2D,
@@ -185,5 +187,26 @@ impl Swapchain {
             color,
             frames,
         })
+    }
+
+    pub unsafe fn cleanup(self, loader: &Loader) -> Result<()> {
+        loader.device.device_wait_idle()?;
+
+        for SwapFrame{view, framebuffer, ..} in self.frames {
+            loader.device.destroy_framebuffer(framebuffer, None);
+            loader.device.destroy_image_view(view, None);
+        }
+
+        loader.device.destroy_image_view(self.depth.view, None);
+        loader.device.destroy_image(self.depth.image, None);
+        loader.allocator.free(self.depth.allocation)?;
+
+        loader.device.destroy_image_view(self.color.view, None);
+        loader.device.destroy_image(self.color.image, None);
+        loader.allocator.free(self.color.allocation)?;
+
+        loader.swapchain.destroy_swapchain(self.swapchain, None);
+
+        Ok(())
     }
 }

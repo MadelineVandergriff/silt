@@ -65,9 +65,9 @@ impl QueueAllocator {
     }
 }
 
-/// All queues but the initial one are guaranteed to be unique
 pub struct QueueHandles {
     pub ty: QueueType,
+    pub unique: bool,
     pub queues: Vec<vk::Queue>,
     pub family: u32,
 }
@@ -191,6 +191,7 @@ pub fn get_device_queues(
 
             QueueHandles {
                 ty: prop.ty,
+                unique: queue_allocators.get(&prop.family).unwrap().has_unique(),
                 queues,
                 family: prop.family,
             }
