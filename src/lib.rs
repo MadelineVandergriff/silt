@@ -6,3 +6,4 @@ pub mod loader;
 pub mod sync;
 pub mod swapchain;
 pub mod storage;
+pub mod pipeline;
