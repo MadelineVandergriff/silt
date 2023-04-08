@@ -5,6 +5,7 @@ use std::borrow::Cow;
 use std::ffi::CStr;
 
 use crate::prelude::*;
+use crate::storage::image;
 use crate::sync::get_device_queues;
 use crate::sync::{QueueHandles, QueueRequest, QueueType};
 use anyhow::{anyhow, Result};
@@ -57,6 +58,9 @@ impl Loader {
             )?;
             let allocator = get_allocator(&instance, &device, pdevice_handle)?;
             let swapchain = Swapchain::new(&instance, &device);
+
+            image::get_depth_format_prime_cache(&instance, pdevice_handle)
+                .ok_or(anyhow!("could not find suitable depth format"))?;
 
             Ok((
                 Self {

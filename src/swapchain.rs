@@ -33,13 +33,7 @@ impl Swapchain {
         let surface_capabilities = loader
             .surface
             .get_physical_device_surface_capabilities(pdevice, surface)?;
-        let surface_format = loader
-            .surface
-            .get_physical_device_surface_formats(pdevice, surface)
-            .unwrap()
-            .into_iter()
-            .find_or_first(|&format| format.format == vk::Format::B8G8R8A8_SRGB)
-            .unwrap();
+        let surface_format = image::get_surface_format(loader, surface, pdevice);
         let present_mode = loader
             .surface
             .get_physical_device_surface_present_modes(pdevice, surface)
@@ -127,16 +121,9 @@ impl Swapchain {
 
         let color = image::create_image(loader, color_image_ci)?;
 
-        let depth_format = image::find_supported_format(
+        let depth_format = image::get_depth_format(
             &loader.instance,
-            pdevice,
-            [
-                vk::Format::D32_SFLOAT,
-                vk::Format::D32_SFLOAT_S8_UINT,
-                vk::Format::D24_UNORM_S8_UINT,
-            ],
-            vk::ImageTiling::OPTIMAL,
-            vk::FormatFeatureFlags::DEPTH_STENCIL_ATTACHMENT,
+            pdevice
         )
         .unwrap();
 

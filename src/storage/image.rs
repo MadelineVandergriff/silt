@@ -1,5 +1,7 @@
-use crate::{prelude::*, loader::Loader};
+use crate::{loader::Loader, prelude::*};
 use anyhow::Result;
+use cached::proc_macro::once;
+use itertools::Itertools;
 
 #[derive(Debug, Clone)]
 pub struct Image {
@@ -36,10 +38,7 @@ impl Default for ImageCreateInfo {
     }
 }
 
-pub unsafe fn create_image(
-    loader: &Loader,
-    image_ci: ImageCreateInfo,
-) -> Result<Image> {
+pub unsafe fn create_image(loader: &Loader, image_ci: ImageCreateInfo) -> Result<Image> {
     let texture_image_create_info = vk::ImageCreateInfo::builder()
         .image_type(vk::ImageType::TYPE_2D)
         .extent(vk::Extent3D {
@@ -56,7 +55,8 @@ pub unsafe fn create_image(
         .sharing_mode(vk::SharingMode::EXCLUSIVE)
         .samples(image_ci.samples);
 
-    let image = loader.device
+    let image = loader
+        .device
         .create_image(&texture_image_create_info, None)?;
     let requirements = loader.device.get_image_memory_requirements(image);
 
@@ -69,7 +69,8 @@ pub unsafe fn create_image(
     };
 
     let allocation = loader.allocator.allocate(&allocation_create_info)?;
-    loader.device
+    loader
+        .device
         .bind_image_memory(
             image,
             loader.allocator.get_memory(allocation)?,
@@ -116,4 +117,38 @@ pub unsafe fn find_supported_format(
             _ => false,
         }
     })
+}
+
+#[once]
+pub unsafe fn get_depth_format(
+    instance: &Instance,
+    pdevice: vk::PhysicalDevice,
+) -> Option<vk::Format> {
+    unsafe { // Needed for the macro to compile
+        find_supported_format(
+            instance,
+            pdevice,
+            [
+                vk::Format::D32_SFLOAT,
+                vk::Format::D32_SFLOAT_S8_UINT,
+                vk::Format::D24_UNORM_S8_UINT,
+            ],
+            vk::ImageTiling::OPTIMAL,
+            vk::FormatFeatureFlags::DEPTH_STENCIL_ATTACHMENT,
+        )
+    }
+}
+
+pub unsafe fn get_surface_format(
+    loader: &Loader,
+    surface: vk::SurfaceKHR,
+    pdevice: vk::PhysicalDevice,
+) -> vk::SurfaceFormatKHR {
+    loader
+        .surface
+        .get_physical_device_surface_formats(pdevice, surface)
+        .unwrap()
+        .into_iter()
+        .find_or_first(|&format| format.format == vk::Format::B8G8R8A8_SRGB)
+        .unwrap()
 }

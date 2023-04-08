@@ -1,6 +1,11 @@
 use crate::{prelude::*, loader::Loader};
+use crate::storage::image;
 
-pub fn get_present_pass(loader: &Loader) -> vk::RenderPass {
+pub unsafe fn get_present_pass(loader: &Loader, pdevice: vk::PhysicalDevice, surface: vk::SurfaceKHR) -> vk::RenderPass {
+    let surface_format = image::get_surface_format(loader, surface, pdevice);
+    let pdevice_limits = loader.instance.get_physical_device_properties(pdevice).limits;
+    let msaa_samples = pdevice_limits.framebuffer_color_sample_counts.min(pdevice_limits.framebuffer_depth_sample_counts);
+
     let color_attachment = vk::AttachmentDescription::builder()
         .format(surface_format.format)
         .samples(msaa_samples)
@@ -12,7 +17,7 @@ pub fn get_present_pass(loader: &Loader) -> vk::RenderPass {
         .final_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
 
     let depth_attachment = vk::AttachmentDescription::builder()
-        .format(depth_format)
+        .format(image::get_depth_format(&loader.instance, pdevice).unwrap())
         .samples(msaa_samples)
         .load_op(vk::AttachmentLoadOp::CLEAR)
         .store_op(vk::AttachmentStoreOp::STORE)
@@ -76,7 +81,7 @@ pub fn get_present_pass(loader: &Loader) -> vk::RenderPass {
         .subpasses(std::slice::from_ref(&subpass))
         .dependencies(std::slice::from_ref(&subpass_dependency));
 
-    let render_pass = device
+    let render_pass = loader.device
         .create_render_pass(&render_pass_create_info, None)
         .unwrap();
 
