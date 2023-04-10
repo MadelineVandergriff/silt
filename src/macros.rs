@@ -1,16 +1,26 @@
 use anyhow::{anyhow, Result};
 use ash::util::read_spv;
 use bitflags::bitflags;
-use derive_more::Into;
 use once_cell::sync::Lazy;
 use shaderc::{Compiler, CompileOptions};
 pub use shaderc::ShaderKind;
 use std::fs;
 use std::io::Cursor;
+use std::ops::{Range, RangeBounds};
 use std::path::{Path, PathBuf};
+use std::slice::SliceIndex;
+use derive_more::Into;
 
 #[derive(Into)]
 pub struct ShaderCode(Vec<u32>);
+
+impl<R: SliceIndex<[u32]>> std::ops::Index<R> for ShaderCode {
+    type Output = <R as SliceIndex<[u32]>>::Output;
+
+    fn index(&self, index: R) -> &Self::Output {
+        &self.0[index]
+    }
+}
 
 static SHADERC_COMPILER: Lazy<Compiler> = Lazy::new(|| Compiler::new().unwrap());
 
