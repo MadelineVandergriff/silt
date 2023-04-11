@@ -7,3 +7,4 @@ pub mod sync;
 pub mod swapchain;
 pub mod storage;
 pub mod pipeline;
+pub mod model;
