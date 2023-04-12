@@ -1,16 +1,11 @@
-mod device_features;
-pub use device_features::*;
-
-mod physical_device_attributes;
-pub use physical_device_attributes::*;
-
 use std::borrow::Cow;
 use std::ffi::CStr;
 
 use crate::prelude::*;
+use crate::properties::{DeviceFeaturesRequest, DeviceFeatures};
 use crate::storage::image;
 use crate::sync::get_device_queues;
-use crate::sync::{QueueHandles, QueueRequest, QueueType};
+use crate::sync::{QueueHandle, QueueRequest, QueueType};
 use anyhow::{anyhow, Result};
 use itertools::Itertools;
 use raw_window_handle::HasRawDisplayHandle;
@@ -41,7 +36,7 @@ pub struct LoaderHandles {
     pub debug_messenger: vk::DebugUtilsMessengerEXT,
     pub surface: vk::SurfaceKHR,
     pub pdevice: vk::PhysicalDevice,
-    pub queues: Vec<QueueHandles>,
+    pub queues: Vec<QueueHandle>,
 }
 
 impl Loader {
@@ -207,7 +202,7 @@ unsafe fn get_device(
     surface: vk::SurfaceKHR,
     queue_requests: Vec<QueueRequest>,
     device_features: DeviceFeaturesRequest,
-) -> Result<(vk::PhysicalDevice, Device, Vec<QueueHandles>)> {
+) -> Result<(vk::PhysicalDevice, Device, Vec<QueueHandle>)> {
     if queue_requests.is_empty() {
         return Err(anyhow!(
             "no queues requested. you,,, you need queues to do things bestie"

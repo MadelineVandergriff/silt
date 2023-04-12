@@ -65,7 +65,8 @@ impl QueueAllocator {
     }
 }
 
-pub struct QueueHandles {
+#[derive(Debug, Clone)]
+pub struct QueueHandle {
     pub ty: QueueType,
     pub unique: bool,
     pub queues: Vec<vk::Queue>,
@@ -147,7 +148,7 @@ pub fn get_device_queues(
     properties: Vec<QueueProperties>,
     pdevice: vk::PhysicalDevice,
     builder: vk::DeviceCreateInfoBuilder<'_>,
-) -> Result<(Device, Vec<QueueHandles>)> {
+) -> Result<(Device, Vec<QueueHandle>)> {
     let max_queue_count = properties
         .iter()
         .map(|prop| prop.props.queue_count)
@@ -189,7 +190,7 @@ pub fn get_device_queues(
                 .map(|idx| unsafe { device.get_device_queue(prop.family, idx) })
                 .collect_vec();
 
-            QueueHandles {
+            QueueHandle {
                 ty: prop.ty,
                 unique: queue_allocators.get(&prop.family).unwrap().has_unique(),
                 queues,

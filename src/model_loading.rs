@@ -662,7 +662,7 @@ impl Drop for VulkanData {
 
 fn load_model() -> (Vec<Vertex>, Vec<u32>) {
     let (models, _) =
-        tobj::load_obj("src/models/viking_room.obj", &tobj::GPU_LOAD_OPTIONS).unwrap();
+        tobj::load_obj("assets/models/viking_room.obj", &tobj::GPU_LOAD_OPTIONS).unwrap();
     let mesh = &models[0].mesh;
 
     let vertices = std::iter::zip(
@@ -685,7 +685,7 @@ fn load_model() -> (Vec<Vertex>, Vec<u32>) {
 }
 
 unsafe fn get_window(width: u32, height: u32) -> (Window, EventLoop<()>) {
-    let icon = image::open("src/textures/icon.png").unwrap().into_rgba8();
+    let icon = image::open("assets/textures/icon.png").unwrap().into_rgba8();
     let (icon_width, icon_height) = icon.dimensions();
     let window_icon =
         winit::window::Icon::from_rgba(icon.into_raw(), icon_width, icon_height).unwrap();
@@ -1139,8 +1139,8 @@ unsafe fn get_pipeline(
     vk::PipelineLayout,
     vk::Pipeline,
 ) {
-    let vertex_shader_module = get_shader_module(device, "src/shaders/model_loading.vert");
-    let fragment_shader_module = get_shader_module(device, "src/shaders/model_loading.frag");
+    let vertex_shader_module = get_shader_module(device, "assets/shaders/model_loading.vert");
+    let fragment_shader_module = get_shader_module(device, "assets/shaders/model_loading.frag");
 
     let vertex_stage_create_info = vk::PipelineShaderStageCreateInfo::builder()
         .stage(vk::ShaderStageFlags::VERTEX)
@@ -1739,7 +1739,7 @@ unsafe fn get_texture(
     command_pool: &vk::CommandPool,
     allocator: &Allocator,
 ) -> (vk::Image, vk::Allocation, vk::ImageView, vk::Sampler) {
-    let texture = image::open("src/textures/viking_room.png")
+    let texture = image::open("assets/textures/viking_room.png")
         .unwrap()
         .into_rgba8();
     let samples = texture.as_flat_samples();

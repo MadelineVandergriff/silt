@@ -1,5 +1,5 @@
 use crate::prelude::*;
-use super::Loader;
+use crate::loader::Loader;
 
 pub fn get_msaa_samples(loader: &Loader, pdevice: vk::PhysicalDevice) -> vk::SampleCountFlags {
     let props = unsafe { loader.instance.get_physical_device_properties(pdevice) };

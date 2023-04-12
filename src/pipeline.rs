@@ -1,7 +1,7 @@
 use anyhow::Result;
 use std::ffi::CStr;
 
-use crate::loader::get_msaa_samples;
+use crate::properties::get_msaa_samples;
 use crate::storage::descriptors::Layouts;
 use crate::{loader::Loader, prelude::*};
 
