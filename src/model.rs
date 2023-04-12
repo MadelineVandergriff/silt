@@ -1,7 +1,8 @@
 use memoffset::offset_of;
 
 use crate::prelude::*;
-use crate::pipeline::{BindableVertex, BindableVec};
+use crate::pipeline::BindableVertex;
+use crate::storage::descriptors::Bindable;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Vertex {
@@ -50,10 +51,11 @@ pub struct MVP {
     pub projection: glam::Mat4,
 }
 
-impl BindableVec for MVP {
-    fn bindings(&self) -> Vec<vk::DescriptorSetLayoutBinding> {
-        
-        vec![]
+impl Bindable for MVP {
+    fn binding(&self) -> vk::DescriptorSetLayoutBindingBuilder {
+            vk::DescriptorSetLayoutBinding::builder()
+                .descriptor_count(1)
+                .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
     }
 }
 
