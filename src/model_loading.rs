@@ -1372,7 +1372,7 @@ unsafe fn create_image(
         name: "UNNAMED IMAGE",
         requirements,
         location: create_info.location,
-        linear: true,
+        linear: false,
         allocation_scheme: vk::AllocationScheme::GpuAllocatorManaged,
     };
 

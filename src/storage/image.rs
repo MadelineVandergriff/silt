@@ -20,6 +20,7 @@ pub struct ImageCreateInfo {
     pub location: vk::MemoryLocation,
     pub samples: vk::SampleCountFlags,
     pub view_aspect: vk::ImageAspectFlags,
+    pub name: Option<&'static str>
 }
 
 impl Default for ImageCreateInfo {
@@ -34,26 +35,27 @@ impl Default for ImageCreateInfo {
             location: vk::MemoryLocation::GpuOnly,
             samples: vk::SampleCountFlags::from_raw(1),
             view_aspect: vk::ImageAspectFlags::COLOR,
+            name: None
         }
     }
 }
 
-pub unsafe fn create_image(loader: &Loader, image_ci: ImageCreateInfo) -> Result<Image> {
+pub unsafe fn create_image(loader: &Loader, create_info: ImageCreateInfo) -> Result<Image> {
     let texture_image_create_info = vk::ImageCreateInfo::builder()
         .image_type(vk::ImageType::TYPE_2D)
         .extent(vk::Extent3D {
-            width: image_ci.width,
-            height: image_ci.height,
+            width: create_info.width,
+            height: create_info.height,
             depth: 1,
         })
-        .mip_levels(image_ci.mip_levels)
+        .mip_levels(create_info.mip_levels)
         .array_layers(1)
-        .format(image_ci.format)
-        .tiling(image_ci.tiling)
+        .format(create_info.format)
+        .tiling(create_info.tiling)
         .initial_layout(vk::ImageLayout::UNDEFINED)
-        .usage(image_ci.usage)
+        .usage(create_info.usage)
         .sharing_mode(vk::SharingMode::EXCLUSIVE)
-        .samples(image_ci.samples);
+        .samples(create_info.samples);
 
     let image = loader
         .device
@@ -61,10 +63,10 @@ pub unsafe fn create_image(loader: &Loader, image_ci: ImageCreateInfo) -> Result
     let requirements = loader.device.get_image_memory_requirements(image);
 
     let allocation_create_info = vk::AllocationCreateInfo {
-        name: "UNNAMED IMAGE",
+        name: create_info.name.unwrap_or("UNNAMED IMAGE"),
         requirements,
-        location: image_ci.location,
-        linear: true,
+        location: create_info.location,
+        linear: create_info.tiling == vk::ImageTiling::LINEAR,
         allocation_scheme: vk::AllocationScheme::GpuAllocatorManaged,
     };
 
@@ -80,13 +82,13 @@ pub unsafe fn create_image(loader: &Loader, image_ci: ImageCreateInfo) -> Result
 
     let create_info = vk::ImageViewCreateInfo::builder()
         .image(image)
-        .format(image_ci.format)
+        .format(create_info.format)
         .view_type(vk::ImageViewType::TYPE_2D)
         .subresource_range(
             vk::ImageSubresourceRange::builder()
-                .aspect_mask(image_ci.view_aspect)
+                .aspect_mask(create_info.view_aspect)
                 .base_mip_level(0)
-                .level_count(image_ci.mip_levels)
+                .level_count(create_info.mip_levels)
                 .base_array_layer(0)
                 .layer_count(1)
                 .build(),

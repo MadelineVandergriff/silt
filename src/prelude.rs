@@ -23,6 +23,7 @@ use winit::{
 };
 
 pub use crate::vk;
+pub use crate::loader::Loader;
 
 /// Subset of gpu_allocator::vulkan::Allocator with managed allocation handles
 pub struct Allocator {
