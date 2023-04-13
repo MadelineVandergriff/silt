@@ -1,3 +1,5 @@
+use std::ops::Add;
+
 use crate::{loader::Loader, prelude::*};
 use anyhow::Result;
 use cached::proc_macro::once;
@@ -8,6 +10,7 @@ pub struct Image {
     pub image: vk::Image,
     pub view: vk::ImageView,
     pub allocation: vk::Allocation,
+    pub size: vk::Extent3D,
 }
 
 pub struct ImageCreateInfo {
@@ -41,13 +44,15 @@ impl Default for ImageCreateInfo {
 }
 
 pub unsafe fn create_image(loader: &Loader, create_info: ImageCreateInfo) -> Result<Image> {
+    let size = vk::Extent3D {
+        width: create_info.width,
+        height: create_info.height,
+        depth: 1,
+    };
+
     let texture_image_create_info = vk::ImageCreateInfo::builder()
         .image_type(vk::ImageType::TYPE_2D)
-        .extent(vk::Extent3D {
-            width: create_info.width,
-            height: create_info.height,
-            depth: 1,
-        })
+        .extent(size)
         .mip_levels(create_info.mip_levels)
         .array_layers(1)
         .format(create_info.format)
@@ -100,6 +105,7 @@ pub unsafe fn create_image(loader: &Loader, create_info: ImageCreateInfo) -> Res
         image,
         view,
         allocation,
+        size,
     })
 }
 
@@ -153,4 +159,54 @@ pub unsafe fn get_surface_format(
         .into_iter()
         .find_or_first(|&format| format.format == vk::Format::B8G8R8A8_SRGB)
         .unwrap()
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Volume3D {
+    pub extent: vk::Extent3D,
+    pub offset: vk::Offset3D,
+}
+
+impl From<vk::Extent3D> for Volume3D {
+    fn from(value: vk::Extent3D) -> Self {
+        Self {
+            extent: value,
+            ..Default::default()
+        }
+    }
+}
+
+impl Volume3D {
+    pub fn min(&self) -> glam::IVec3 {
+        glam::ivec3(self.offset.x, self.offset.y, self.offset.z)
+    }
+
+    pub fn max(&self) -> glam::IVec3 {
+        glam::ivec3(
+            self.offset.x + self.extent.width as i32, 
+            self.offset.y + self.extent.height as i32, 
+            self.offset.z + self.extent.depth as i32
+        )
+    }
+
+    pub fn contains_pt(&self, other: glam::IVec3) -> bool {
+        self.max().cmpge(other).all()
+        && self.min().cmple(other).all()
+    }
+
+    pub fn contains(&self, other: &Self) -> bool {
+        self.contains_pt(other.max())
+        && self.contains_pt(other.min())
+    }
+
+    pub fn offset_by(self, offset: vk::Offset3D) -> Self {
+        Self {
+            offset: vk::Offset3D {
+                x: self.offset.x + offset.x,
+                y: self.offset.y + offset.y,
+                z: self.offset.z + offset.z,
+            },
+            ..self
+        }
+    }
 }

@@ -6,7 +6,6 @@ use shaderc::{Compiler, CompileOptions};
 pub use shaderc::ShaderKind;
 use std::fs;
 use std::io::Cursor;
-use std::ops::{Range, RangeBounds};
 use std::path::{Path, PathBuf};
 use std::slice::SliceIndex;
 use derive_more::Into;
