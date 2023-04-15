@@ -1,7 +1,11 @@
-use crate::{loader::Loader, prelude::*};
+use std::cell::Cell;
+
+use crate::{loader::Loader, prelude::*, sync::CommandPool, properties::ProvidedFeatures};
 use anyhow::Result;
 use cached::proc_macro::once;
 use itertools::Itertools;
+
+use super::buffer::*;
 
 #[derive(Debug, Clone)]
 pub struct Image {
@@ -9,6 +13,34 @@ pub struct Image {
     pub view: vk::ImageView,
     pub allocation: vk::Allocation,
     pub size: vk::Extent3D,
+    pub mips: u32,
+    pub layout: Cell<vk::ImageLayout>,
+}
+
+pub struct ImageFile {
+    pub pixels: image::RgbaImage,
+    pub width: u32,
+    pub height: u32,
+    pub size: u64,
+    pub max_mips: u32,
+}
+
+impl ImageFile {
+    pub fn new(path: std::path::PathBuf) -> Result<Self> {
+        let pixels = image::open(path)?.into_rgba8();
+        let width = pixels.width();
+        let height = pixels.height();
+        let size = pixels.as_flat_samples().min_length().unwrap() as u64;
+        let max_mips = (width.max(height) as f32).log2().floor() as u32 + 1;
+
+        Ok(Self {
+            pixels,
+            width,
+            height,
+            size,
+            max_mips,
+        })
+    }
 }
 
 pub struct ImageCreateInfo {
@@ -21,7 +53,7 @@ pub struct ImageCreateInfo {
     pub location: vk::MemoryLocation,
     pub samples: vk::SampleCountFlags,
     pub view_aspect: vk::ImageAspectFlags,
-    pub name: Option<&'static str>
+    pub name: Option<&'static str>,
 }
 
 impl Default for ImageCreateInfo {
@@ -36,7 +68,7 @@ impl Default for ImageCreateInfo {
             location: vk::MemoryLocation::GpuOnly,
             samples: vk::SampleCountFlags::from_raw(1),
             view_aspect: vk::ImageAspectFlags::COLOR,
-            name: None
+            name: None,
         }
     }
 }
@@ -48,7 +80,7 @@ pub unsafe fn create_image(loader: &Loader, create_info: ImageCreateInfo) -> Res
         depth: 1,
     };
 
-    let texture_image_create_info = vk::ImageCreateInfo::builder()
+    let image_ci = vk::ImageCreateInfo::builder()
         .image_type(vk::ImageType::TYPE_2D)
         .extent(size)
         .mip_levels(create_info.mip_levels)
@@ -60,9 +92,7 @@ pub unsafe fn create_image(loader: &Loader, create_info: ImageCreateInfo) -> Res
         .sharing_mode(vk::SharingMode::EXCLUSIVE)
         .samples(create_info.samples);
 
-    let image = loader
-        .device
-        .create_image(&texture_image_create_info, None)?;
+    let image = loader.device.create_image(&image_ci, None)?;
     let requirements = loader.device.get_image_memory_requirements(image);
 
     let allocation_create_info = vk::AllocationCreateInfo {
@@ -83,7 +113,7 @@ pub unsafe fn create_image(loader: &Loader, create_info: ImageCreateInfo) -> Res
         )
         .unwrap();
 
-    let create_info = vk::ImageViewCreateInfo::builder()
+    let view_ci = vk::ImageViewCreateInfo::builder()
         .image(image)
         .format(create_info.format)
         .view_type(vk::ImageViewType::TYPE_2D)
@@ -97,13 +127,15 @@ pub unsafe fn create_image(loader: &Loader, create_info: ImageCreateInfo) -> Res
                 .build(),
         );
 
-    let view = loader.device.create_image_view(&create_info, None)?;
+    let view = loader.device.create_image_view(&view_ci, None)?;
 
     Ok(Image {
         image,
         view,
         allocation,
         size,
+        mips: create_info.mip_levels,
+        layout: Cell::new(vk::ImageLayout::UNDEFINED)
     })
 }
 
@@ -130,7 +162,8 @@ pub unsafe fn get_depth_format(
     instance: &Instance,
     pdevice: vk::PhysicalDevice,
 ) -> Option<vk::Format> {
-    unsafe { // Needed for the macro to compile
+    unsafe {
+        // Needed for the macro to compile
         find_supported_format(
             instance,
             pdevice,
@@ -159,52 +192,231 @@ pub unsafe fn get_surface_format(
         .unwrap()
 }
 
-#[derive(Clone, Copy, Debug, Default)]
-pub struct Volume3D {
-    pub extent: vk::Extent3D,
-    pub offset: vk::Offset3D,
+fn get_pipeline_stage(layout: vk::ImageLayout) -> Result<vk::PipelineStageFlags> {
+    Ok(match layout {
+        vk::ImageLayout::UNDEFINED => vk::PipelineStageFlags::TOP_OF_PIPE,
+        vk::ImageLayout::TRANSFER_DST_OPTIMAL => vk::PipelineStageFlags::TRANSFER,
+        vk::ImageLayout::TRANSFER_SRC_OPTIMAL => vk::PipelineStageFlags::TRANSFER,
+        vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL => vk::PipelineStageFlags::FRAGMENT_SHADER,
+        _ => return Err(anyhow::anyhow!("could not find proper pipeline stage")),
+    })
 }
 
-impl From<vk::Extent3D> for Volume3D {
-    fn from(value: vk::Extent3D) -> Self {
-        Self {
-            extent: value,
-            ..Default::default()
-        }
-    }
+fn get_access_flags(layout: vk::ImageLayout) -> Result<vk::AccessFlags> {
+    Ok(match layout {
+        vk::ImageLayout::UNDEFINED => vk::AccessFlags::empty(),
+        vk::ImageLayout::TRANSFER_DST_OPTIMAL => vk::AccessFlags::TRANSFER_WRITE,
+        vk::ImageLayout::TRANSFER_SRC_OPTIMAL => vk::AccessFlags::TRANSFER_READ,
+        vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL => vk::AccessFlags::SHADER_READ,
+        _ => return Err(anyhow::anyhow!("could not find proper pipeline stage")),
+    })
 }
 
-impl Volume3D {
-    pub fn min(&self) -> glam::IVec3 {
-        glam::ivec3(self.offset.x, self.offset.y, self.offset.z)
+pub unsafe fn transition_layout(loader: &Loader, pool: &CommandPool, image: &Image, new_layout: vk::ImageLayout) -> Result<()> {
+    let old_layout = image.layout.get();
+    let old_stage = get_pipeline_stage(old_layout)?;
+    let new_stage = get_pipeline_stage(new_layout)?;
+    let src_access = get_access_flags(old_layout)?;
+    let dst_access = get_access_flags(new_layout)?;
+
+    image.layout.set(new_layout);
+
+    pool.execute_one_time_commands(loader, |_, command_buffer| {
+        let barrier = vk::ImageMemoryBarrier::builder()
+            .old_layout(old_layout)
+            .new_layout(new_layout)
+            .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+            .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+            .image(image.image)
+            .src_access_mask(src_access)
+            .dst_access_mask(dst_access)
+            .subresource_range(
+                vk::ImageSubresourceRange::builder()
+                    .aspect_mask(vk::ImageAspectFlags::COLOR)
+                    .base_mip_level(0)
+                    .level_count(image.mips)
+                    .base_array_layer(0)
+                    .layer_count(1)
+                    .build(),
+            );
+
+        loader.device.cmd_pipeline_barrier(
+            command_buffer,
+            old_stage,
+            new_stage,
+            vk::DependencyFlags::empty(),
+            &[],
+            &[],
+            std::slice::from_ref(&barrier),
+        );
+    })
+} 
+
+pub unsafe fn generate_mipmaps(loader: &Loader, pool: &CommandPool, image: &Image) {
+    if image.layout.get() != vk::ImageLayout::TRANSFER_DST_OPTIMAL {
+        transition_layout(loader, pool, image, vk::ImageLayout::TRANSFER_DST_OPTIMAL).unwrap();
     }
 
-    pub fn max(&self) -> glam::IVec3 {
-        glam::ivec3(
-            self.offset.x + self.extent.width as i32, 
-            self.offset.y + self.extent.height as i32, 
-            self.offset.z + self.extent.depth as i32
-        )
-    }
+    image.layout.set(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
-    pub fn contains_pt(&self, other: glam::IVec3) -> bool {
-        self.max().cmpge(other).all()
-        && self.min().cmple(other).all()
-    }
+    pool.execute_one_time_commands(loader, |_, command_buffer| {
+        let mut barrier = vk::ImageMemoryBarrier::builder()
+            .image(image.image)
+            .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+            .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+            .subresource_range(
+                vk::ImageSubresourceRange::builder()
+                    .aspect_mask(vk::ImageAspectFlags::COLOR)
+                    .base_array_layer(0)
+                    .layer_count(1)
+                    .level_count(1)
+                    .build(),
+            )
+            .build();
 
-    pub fn contains(&self, other: &Self) -> bool {
-        self.contains_pt(other.max())
-        && self.contains_pt(other.min())
-    }
+        for mip_level in 0..image.mips - 1 {
+            let mip_width = (image.size.width >> mip_level).max(1);
+            let mip_height = (image.size.height >> mip_level).max(1);
 
-    pub fn offset_by(self, offset: vk::Offset3D) -> Self {
-        Self {
-            offset: vk::Offset3D {
-                x: self.offset.x + offset.x,
-                y: self.offset.y + offset.y,
-                z: self.offset.z + offset.z,
-            },
-            ..self
+            barrier.subresource_range.base_mip_level = mip_level;
+            barrier.old_layout = vk::ImageLayout::TRANSFER_DST_OPTIMAL;
+            barrier.new_layout = vk::ImageLayout::TRANSFER_SRC_OPTIMAL;
+            barrier.src_access_mask = vk::AccessFlags::TRANSFER_WRITE;
+            barrier.dst_access_mask = vk::AccessFlags::TRANSFER_READ;
+
+            loader.device.cmd_pipeline_barrier(
+                command_buffer,
+                vk::PipelineStageFlags::TRANSFER,
+                vk::PipelineStageFlags::TRANSFER,
+                vk::DependencyFlags::empty(),
+                &[],
+                &[],
+                &[barrier],
+            );
+
+            let blit = vk::ImageBlit::builder()
+                .src_offsets([
+                    vk::Offset3D { x: 0, y: 0, z: 0 },
+                    vk::Offset3D {
+                        x: mip_width as i32,
+                        y: mip_height as i32,
+                        z: 1,
+                    },
+                ])
+                .src_subresource(
+                    vk::ImageSubresourceLayers::builder()
+                        .base_array_layer(0)
+                        .layer_count(1)
+                        .mip_level(mip_level)
+                        .aspect_mask(vk::ImageAspectFlags::COLOR)
+                        .build(),
+                )
+                .dst_offsets([
+                    vk::Offset3D { x: 0, y: 0, z: 0 },
+                    vk::Offset3D {
+                        x: (mip_width >> 1).max(1) as i32,
+                        y: (mip_height >> 1).max(1) as i32,
+                        z: 1,
+                    },
+                ])
+                .dst_subresource(
+                    vk::ImageSubresourceLayers::builder()
+                        .base_array_layer(0)
+                        .layer_count(1)
+                        .mip_level(mip_level + 1)
+                        .aspect_mask(vk::ImageAspectFlags::COLOR)
+                        .build(),
+                );
+
+            loader.device.cmd_blit_image(
+                command_buffer,
+                image.image,
+                vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+                image.image,
+                vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                std::slice::from_ref(&blit),
+                vk::Filter::LINEAR,
+            );
+
+            barrier.old_layout = vk::ImageLayout::TRANSFER_SRC_OPTIMAL;
+            barrier.new_layout = vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL;
+            barrier.src_access_mask = vk::AccessFlags::TRANSFER_READ;
+            barrier.dst_access_mask = vk::AccessFlags::SHADER_READ;
+
+            loader.device.cmd_pipeline_barrier(
+                command_buffer,
+                vk::PipelineStageFlags::TRANSFER,
+                vk::PipelineStageFlags::FRAGMENT_SHADER,
+                vk::DependencyFlags::empty(),
+                &[],
+                &[],
+                &[barrier],
+            );
         }
-    }
+
+        barrier.subresource_range.base_mip_level = image.mips - 1;
+        barrier.old_layout = vk::ImageLayout::TRANSFER_DST_OPTIMAL;
+        barrier.new_layout = vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL;
+        barrier.src_access_mask = vk::AccessFlags::TRANSFER_WRITE;
+        barrier.dst_access_mask = vk::AccessFlags::SHADER_READ;
+
+        loader.device.cmd_pipeline_barrier(
+            command_buffer,
+            vk::PipelineStageFlags::TRANSFER,
+            vk::PipelineStageFlags::FRAGMENT_SHADER,
+            vk::DependencyFlags::empty(),
+            &[],
+            &[],
+            &[barrier],
+        );
+    }).unwrap();
+}
+
+pub unsafe fn upload_texture(loader: &Loader, pool: &CommandPool, file: ImageFile) -> Result<Image> {
+    let buffer_ci = BufferCreateInfo {
+        size: file.size,
+        name: None,
+        usage: vk::BufferUsageFlags::TRANSFER_SRC,
+        location: vk::MemoryLocation::CpuToGpu,
+    };
+
+    let src_buffer = create_buffer(loader, buffer_ci)?;
+    map_buffer(loader, &src_buffer).copy_from_slice(&file.pixels);
+
+    let image_ci = ImageCreateInfo {
+        width: file.width,
+        height: file.height,
+        mip_levels: file.max_mips,
+        usage: vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::TRANSFER_SRC | vk::ImageUsageFlags::SAMPLED,
+        view_aspect: vk::ImageAspectFlags::COLOR,
+        name: Some("Texture Image"),
+        ..Default::default()
+    };
+
+    let image = create_image(loader, image_ci)?;
+    transition_layout(loader, pool, &image, vk::ImageLayout::TRANSFER_DST_OPTIMAL)?;
+    copy_buffer_to_whole_image(loader, pool, &src_buffer, &image)?;
+    generate_mipmaps(loader, pool, &image);
+    destroy_buffer(loader, src_buffer);
+
+    Ok(image)
+}
+
+pub fn get_sampler(loader: &Loader, features: ProvidedFeatures, image: &Image) -> Result<vk::Sampler> {
+    let create_info = vk::SamplerCreateInfo::builder()
+    .mag_filter(vk::Filter::LINEAR)
+    .min_filter(vk::Filter::LINEAR)
+    .address_mode_u(vk::SamplerAddressMode::REPEAT)
+    .address_mode_v(vk::SamplerAddressMode::REPEAT)
+    .address_mode_w(vk::SamplerAddressMode::REPEAT)
+    .anisotropy_enable(true)
+    .max_anisotropy(features.sampler_anisotropy().unwrap_or_default())
+    .border_color(vk::BorderColor::FLOAT_OPAQUE_WHITE)
+    .compare_op(vk::CompareOp::ALWAYS)
+    .mipmap_mode(vk::SamplerMipmapMode::LINEAR)
+    .min_lod(0.)
+    .max_lod(image.mips as f32);
+
+    let sampler = unsafe { loader.device.create_sampler(&create_info, None)? };
+    Ok(sampler)
 }

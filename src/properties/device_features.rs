@@ -1,7 +1,7 @@
 use std::ops::BitOr;
 
 use bitflags::bitflags;
-use crate::vk;
+use crate::prelude::*;
 
 bitflags! {
     #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -15,6 +15,22 @@ bitflags! {
 pub struct DeviceFeaturesRequest {
     pub required: DeviceFeatures,
     pub prefered: DeviceFeatures,
+}
+
+pub struct ProvidedFeatures {
+    pub features: DeviceFeatures,
+    pub pdevice: vk::PhysicalDevice,
+    pub limits: vk::PhysicalDeviceLimits
+}
+
+impl ProvidedFeatures {
+    pub fn sampler_anisotropy(&self) -> Option<f32> {
+        if self.features.contains(DeviceFeatures::SAMPLER_ANISOTROPY) {
+             Some(self.limits.max_sampler_anisotropy)
+        } else {
+            None
+        }
+    }
 }
 
 impl Into<DeviceFeatures> for vk::PhysicalDeviceFeatures {

@@ -1,4 +1,4 @@
-use super::image::{Image, Volume3D};
+use super::image::Image;
 use crate::prelude::*;
 use crate::sync::CommandPool;
 use anyhow::{anyhow, Result};
@@ -105,8 +105,8 @@ pub unsafe fn copy_buffer_to_image(
     dst: &Image,
     region: vk::BufferImageCopy,
 ) -> Result<()> {
-    let region_volume = Volume3D::from(region.image_extent).offset_by(region.image_offset);
-    if !Volume3D::from(dst.size).contains(&region_volume) {
+    let region_volume = vk::Volume3D::from(region.image_extent).offset_by(region.image_offset);
+    if !vk::Volume3D::from(dst.size).contains(&region_volume) {
         return Err(anyhow!(
             "Region extents past image bounds: [{:?}] [{:?}]",
             region,

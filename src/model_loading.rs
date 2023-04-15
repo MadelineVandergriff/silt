@@ -662,7 +662,7 @@ impl Drop for VulkanData {
 
 fn load_model() -> (Vec<Vertex>, Vec<u32>) {
     let (models, _) =
-        tobj::load_obj("assets/models/viking_room.obj", &tobj::GPU_LOAD_OPTIONS).unwrap();
+        tobj::load_obj("assets/models/vulkan_room.obj", &tobj::GPU_LOAD_OPTIONS).unwrap();
     let mesh = &models[0].mesh;
 
     let vertices = std::iter::zip(
