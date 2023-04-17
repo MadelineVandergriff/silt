@@ -1,6 +1,6 @@
 pub use crate::macros::ShaderCode;
 
-use crate::storage::descriptors::BindableVec;
+use crate::storage::descriptors::{BindableVec, BindingDescription};
 use crate::{loader::Loader, prelude::*};
 use anyhow::Result;
 use std::rc::Rc;
@@ -40,16 +40,15 @@ impl Shader for VertexShader {
         vk::ShaderStageFlags::VERTEX
     }
 
-    fn descriptor_bindings(&self) -> Vec<vk::DescriptorSetLayoutBinding> {
+    fn descriptor_bindings(&self) -> Vec<BindingDescription> {
         self.bindings
             .bindings()
             .into_iter()
-            .enumerate()
-            .map(|(i, builder)| {
-                builder
-                    .binding(i as u32)
-                    .stage_flags(vk::ShaderStageFlags::VERTEX)
-                    .build()
+            .map(|binding| {
+                BindingDescription {
+                    stage_flags: self.shader_flags(),
+                    ..binding
+                }
             })
             .collect()
     }
@@ -79,16 +78,15 @@ impl Shader for FragmentShader {
         vk::ShaderStageFlags::FRAGMENT
     }
     
-    fn descriptor_bindings(&self) -> Vec<vk::DescriptorSetLayoutBinding> {
+    fn descriptor_bindings(&self) -> Vec<BindingDescription> {
         self.bindings
             .bindings()
             .into_iter()
-            .enumerate()
-            .map(|(i, builder)| {
-                builder
-                    .binding(i as u32)
-                    .stage_flags(vk::ShaderStageFlags::FRAGMENT)
-                    .build()
+            .map(|binding| {
+                BindingDescription {
+                    stage_flags: self.shader_flags(),
+                    ..binding
+                }
             })
             .collect()
     }
@@ -101,7 +99,7 @@ pub trait BindableVertex {
 
 pub trait Shader {
     fn shader_flags(&self) -> vk::ShaderStageFlags;
-    fn descriptor_bindings(&self) -> Vec<vk::DescriptorSetLayoutBinding>;
+    fn descriptor_bindings(&self) -> Vec<BindingDescription>;
 }
 
 pub struct Shaders {

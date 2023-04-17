@@ -4,7 +4,7 @@ use memoffset::offset_of;
 use crate::pipeline::BindableVertex;
 use crate::prelude::*;
 use crate::storage::buffer::{self, Buffer, BufferCreateInfo, MemoryMapping};
-use crate::storage::descriptors::Bindable;
+use crate::storage::descriptors::{Bindable, DescriptorWrite, UniformWrite, BindingDescription, DescriptorFrequency, DescriptorWriter, BoundBuffer};
 use crate::sync::CommandPool;
 
 #[derive(Clone, Copy, Debug)]
@@ -89,10 +89,32 @@ pub struct MVP {
 }
 
 impl Bindable for MVP {
-    fn binding(&self) -> vk::DescriptorSetLayoutBindingBuilder {
-        vk::DescriptorSetLayoutBinding::builder()
+    fn binding(&self) -> BindingDescription {
+        BindingDescription {
+            descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
+            frequency: DescriptorFrequency::Global,
+            binding: 0,
+            descriptor_count: 1,
+            stage_flags: vk::ShaderStageFlags::empty(),
+        }
+    }
+
+    fn pool_size(&self) -> vk::DescriptorPoolSize {
+        vk::DescriptorPoolSize::builder()
+            .ty(vk::DescriptorType::UNIFORM_BUFFER)
             .descriptor_count(1)
-            .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
+            .build()
+    }
+}
+
+impl DescriptorWriter for BoundBuffer<MVP> {
+    fn writer(&self) -> Box<dyn DescriptorWrite> {
+        let info = vk::DescriptorBufferInfo::builder()
+            .buffer(self.buffer.buffer)
+            .offset(0)
+            .range(std::mem::size_of::<MVP>() as u64)
+            .build();
+        Box::new(UniformWrite::create::<MVP>(info))
     }
 }
 
