@@ -1,7 +1,12 @@
 use silt::loader::*;
+use silt::model::MVP;
+use silt::prelude::*;
+use silt::properties::{DeviceFeaturesRequest, DeviceFeatures};
+use silt::storage::buffer::{get_bound_buffer, destroy_buffer};
+use silt::storage::descriptors::UniformWrite;
 use silt::sync::{QueueRequest, QueueType};
 
-/*fn main() {
+fn main() {
     let loader_ci = LoaderCreateInfo {
         width: 1920,
         height: 1080,
@@ -16,10 +21,12 @@ use silt::sync::{QueueRequest, QueueType};
     };
 
     let (loader, handles) = Loader::new(loader_ci).unwrap();
-    std::thread::sleep(std::time::Duration::from_secs(1));
-}*/
 
-fn main() {
-    let silt = silt::model_loading::VulkanData::new();
-    silt.run();
+    let bound = get_bound_buffer::<MVP, UniformWrite>(&loader, vk::BufferUsageFlags::UNIFORM_BUFFER).unwrap();
+    bound.update(&loader, |mvp| {
+        mvp.model *= glam::Mat4::from_rotation_x(std::f32::consts::FRAC_PI_8);
+    });
+    destroy_buffer(&loader, bound.buffer);
+
+    std::thread::sleep(std::time::Duration::from_secs(1));
 }

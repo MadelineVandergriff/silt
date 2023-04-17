@@ -1,8 +1,8 @@
-use super::image::Image;
+use super::{image::Image, descriptors::{Bindable, DescriptorWrite, DescriptorWriter}};
 use crate::prelude::*;
 use crate::sync::CommandPool;
 use anyhow::{anyhow, Result};
-use std::cell::RefCell;
+use std::{cell::{RefCell, Cell}, marker::PhantomData};
 
 #[derive(Clone, Debug)]
 pub struct Buffer {
@@ -16,6 +16,40 @@ pub struct BufferCreateInfo {
     pub name: Option<&'static str>,
     pub usage: vk::BufferUsageFlags,
     pub location: vk::MemoryLocation,
+}
+
+pub struct BoundBuffer<T: Bindable, W: DescriptorWrite> {
+    pub buffer: Buffer,
+    pub mapping: Option<MemoryMapping<'static, T>>,
+    inner: Cell<T>,
+    _phantom: PhantomData<W>
+}
+
+impl<T: Bindable, W: DescriptorWrite> BoundBuffer<T, W> {
+    fn copy(&self, loader: &Loader, value: &T) {
+        if let Some(ref mapping) = self.mapping {
+            mapping.copy_from_slice(std::slice::from_ref(value));
+        } else {
+            unsafe { map_buffer(loader, &self.buffer).copy_from_slice(std::slice::from_ref(value)) };
+        }
+    }
+
+    pub fn update(&self, loader: &Loader, f: impl FnOnce(&mut T)) {
+        let mut value = self.inner.get();
+        f(&mut value);
+        self.copy(loader, &value);
+        self.inner.set(value);
+    }
+}
+
+pub trait FromTypedBuffer<T: Bindable> {
+    fn from(value: &Buffer) -> Self;
+}
+
+impl<T: Bindable, W: DescriptorWrite + FromTypedBuffer<T> + 'static> DescriptorWriter for BoundBuffer<T, W> {
+    fn writer(&self) -> Box<dyn DescriptorWrite> {
+        Box::new(W::from(&self.buffer))
+    }
 }
 
 pub unsafe fn create_buffer(loader: &Loader, create_info: BufferCreateInfo) -> Result<Buffer> {
@@ -244,4 +278,23 @@ pub fn upload_to_gpu<T: Copy>(
     destroy_buffer(loader, staging);
 
     Ok(buffer)
+}
+
+pub fn get_bound_buffer<T: Bindable + Copy, W: DescriptorWrite>(loader: &Loader, usage: vk::BufferUsageFlags) -> Result<BoundBuffer<T, W>> {
+    let buffer_ci = BufferCreateInfo {
+        size: std::mem::size_of::<T>() as u64,
+        name: None,
+        usage,
+        location: vk::MemoryLocation::CpuToGpu,
+    };
+
+    let buffer = unsafe { create_buffer(loader, buffer_ci)? };
+    let mapping = unsafe { map_buffer_persistent(loader, &buffer) };
+
+    Ok(BoundBuffer {
+        buffer,
+        mapping: Some(mapping),
+        _phantom: PhantomData,
+        inner: Cell::default()
+    })
 }

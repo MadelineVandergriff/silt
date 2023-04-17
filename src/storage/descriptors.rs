@@ -6,24 +6,20 @@ use impl_trait_for_tuples::impl_for_tuples;
 use itertools::Itertools;
 use ouroboros::self_referencing;
 
-use super::buffer::{Buffer, MemoryMapping};
+use super::buffer::{Buffer, FromTypedBuffer};
 
 pub trait BindableVec {
     fn bindings(&self) -> Vec<BindingDescription>;
 }
 
-pub trait Bindable {
+pub trait Bindable: Copy + Default {
     fn binding(&self) -> BindingDescription;
     fn pool_size(&self) -> vk::DescriptorPoolSize;
 }
 
 pub trait DescriptorWrite {
     fn write(self, loader: &Loader, set: vk::DescriptorSet);
-}
-
-pub struct BoundBuffer<T: Bindable + Copy> {
-    pub buffer: Buffer,
-    pub persistent_mapping: Option<MemoryMapping<'static, T>>
+    fn binding(&self) -> BindingDescription;
 }
 
 pub trait DescriptorWriter {
@@ -32,6 +28,7 @@ pub trait DescriptorWriter {
 
 #[self_referencing]
 pub struct UniformWrite {
+    binding: BindingDescription,
     info: vk::DescriptorBufferInfo,
     #[borrows(info)]
     #[covariant]
@@ -43,6 +40,7 @@ impl UniformWrite {
         let binding = T::default().binding();
 
         UniformWriteBuilder {
+            binding,
             info,
             write_builder: |info: &vk::DescriptorBufferInfo| {
                 vk::WriteDescriptorSet::builder()
@@ -53,6 +51,18 @@ impl UniformWrite {
             },
         }
         .build()
+    }
+}
+
+impl<T: Bindable + Copy> FromTypedBuffer<T> for UniformWrite {
+    fn from(value: &Buffer) -> Self {
+        let info = vk::DescriptorBufferInfo::builder()
+            .buffer(value.buffer)
+            .offset(0)
+            .range(value.size)
+            .build();
+
+        Self::create::<T>(info)
     }
 }
 
@@ -69,6 +79,10 @@ impl DescriptorWrite for UniformWrite {
                 .device
                 .update_descriptor_sets(&[write.dst_set(set).build()], &[])
         }
+    }
+
+    fn binding(&self) -> BindingDescription {
+        *self.borrow_binding()
     }
 }
 
@@ -170,4 +184,20 @@ pub fn get_layouts(loader: &Loader, shaders: &[&dyn Shader]) -> Result<Layouts> 
     })
 }
 
-pub fn get_descriptors() {}
+pub unsafe fn get_descriptors(loader: &Loader, writes: Vec<Box<dyn DescriptorWrite>>) {
+    let pool_sizes = writes.iter()
+        .map(|write| {
+            let binding = write.binding();
+            vk::DescriptorPoolSize {
+                ty: binding.descriptor_type,
+                descriptor_count: binding.descriptor_count,
+            }
+        })
+        .collect_vec();
+
+    let pool_ci = vk::DescriptorPoolCreateInfo::builder()
+        .pool_sizes(&pool_sizes)
+        .max_sets(8);
+
+    let pool = loader.device.create_descriptor_pool(&pool_ci, None)?;
+}

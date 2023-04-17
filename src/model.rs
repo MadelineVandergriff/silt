@@ -3,8 +3,8 @@ use memoffset::offset_of;
 
 use crate::pipeline::BindableVertex;
 use crate::prelude::*;
-use crate::storage::buffer::{self, Buffer, BufferCreateInfo, MemoryMapping};
-use crate::storage::descriptors::{Bindable, DescriptorWrite, UniformWrite, BindingDescription, DescriptorFrequency, DescriptorWriter, BoundBuffer};
+use crate::storage::buffer::{self, Buffer, BufferCreateInfo, MemoryMapping, BoundBuffer};
+use crate::storage::descriptors::{Bindable, DescriptorWrite, UniformWrite, BindingDescription, DescriptorFrequency, DescriptorWriter};
 use crate::sync::CommandPool;
 
 #[derive(Clone, Copy, Debug)]
@@ -104,42 +104,6 @@ impl Bindable for MVP {
             .ty(vk::DescriptorType::UNIFORM_BUFFER)
             .descriptor_count(1)
             .build()
-    }
-}
-
-impl DescriptorWriter for BoundBuffer<MVP> {
-    fn writer(&self) -> Box<dyn DescriptorWrite> {
-        let info = vk::DescriptorBufferInfo::builder()
-            .buffer(self.buffer.buffer)
-            .offset(0)
-            .range(std::mem::size_of::<MVP>() as u64)
-            .build();
-        Box::new(UniformWrite::create::<MVP>(info))
-    }
-}
-
-pub struct MVPUniformBuffer {
-    pub inner: Buffer,
-    pub mapping: MemoryMapping<'static, MVP>
-}
-
-impl MVPUniformBuffer {
-    pub fn create(loader: &Loader) -> Result<Self> {
-        let buffer_ci = BufferCreateInfo {
-            size: std::mem::size_of::<MVP>() as u64,
-            name: Some("MVP Uniform Buffer"),
-            usage: vk::BufferUsageFlags::UNIFORM_BUFFER,
-            location: vk::MemoryLocation::CpuToGpu,
-        };
-
-        let buffer = unsafe { buffer::create_buffer(loader, buffer_ci)? };
-        let mapping = unsafe { buffer::map_buffer_persistent(loader, &buffer) };
-        mapping.copy_from_slice(&[MVP::default()]);
-
-        Ok(Self {
-            inner: buffer,
-            mapping
-        })
     }
 }
 
