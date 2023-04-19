@@ -3,8 +3,8 @@ use memoffset::offset_of;
 
 use crate::pipeline::BindableVertex;
 use crate::prelude::*;
-use crate::storage::buffer::{self, Buffer, BufferCreateInfo, MemoryMapping, BoundBuffer};
-use crate::storage::descriptors::{Bindable, DescriptorWrite, UniformWrite, BindingDescription, DescriptorFrequency, DescriptorWriter};
+use crate::storage::buffer::{self, Buffer};
+use crate::storage::descriptors::{Bindable, BindingDescription, DescriptorFrequency, UniformWrite};
 use crate::sync::CommandPool;
 
 #[derive(Clone, Copy, Debug)]
@@ -89,6 +89,8 @@ pub struct MVP {
 }
 
 impl Bindable for MVP {
+    type Write = UniformWrite;
+
     fn binding(&self) -> BindingDescription {
         BindingDescription {
             descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,

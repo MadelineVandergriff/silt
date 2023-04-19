@@ -22,7 +22,7 @@ fn main() {
 
     let (loader, handles) = Loader::new(loader_ci).unwrap();
 
-    let bound = get_bound_buffer::<MVP, UniformWrite>(&loader, vk::BufferUsageFlags::UNIFORM_BUFFER).unwrap();
+    let bound = get_bound_buffer::<MVP>(&loader, vk::BufferUsageFlags::UNIFORM_BUFFER).unwrap();
     bound.update(&loader, |mvp| {
         mvp.model *= glam::Mat4::from_rotation_x(std::f32::consts::FRAC_PI_8);
     });

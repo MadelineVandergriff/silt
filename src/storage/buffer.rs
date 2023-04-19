@@ -18,14 +18,13 @@ pub struct BufferCreateInfo {
     pub location: vk::MemoryLocation,
 }
 
-pub struct BoundBuffer<T: Bindable, W: DescriptorWrite> {
+pub struct BoundBuffer<T: Bindable> where T::Write: DescriptorWrite {
     pub buffer: Buffer,
     pub mapping: Option<MemoryMapping<'static, T>>,
     inner: Cell<T>,
-    _phantom: PhantomData<W>
 }
 
-impl<T: Bindable, W: DescriptorWrite> BoundBuffer<T, W> {
+impl<T: Bindable> BoundBuffer<T> {
     fn copy(&self, loader: &Loader, value: &T) {
         if let Some(ref mapping) = self.mapping {
             mapping.copy_from_slice(std::slice::from_ref(value));
@@ -46,9 +45,9 @@ pub trait FromTypedBuffer<T: Bindable> {
     fn from(value: &Buffer) -> Self;
 }
 
-impl<T: Bindable, W: DescriptorWrite + FromTypedBuffer<T> + 'static> DescriptorWriter for BoundBuffer<T, W> {
+impl<T: Bindable> DescriptorWriter for BoundBuffer<T> where T::Write: DescriptorWrite + FromTypedBuffer<T> + 'static {
     fn writer(&self) -> Box<dyn DescriptorWrite> {
-        Box::new(W::from(&self.buffer))
+        Box::new(<T::Write as FromTypedBuffer<T>>::from(&self.buffer))
     }
 }
 
@@ -280,7 +279,7 @@ pub fn upload_to_gpu<T: Copy>(
     Ok(buffer)
 }
 
-pub fn get_bound_buffer<T: Bindable + Copy, W: DescriptorWrite>(loader: &Loader, usage: vk::BufferUsageFlags) -> Result<BoundBuffer<T, W>> {
+pub fn get_bound_buffer<T: Bindable + Copy>(loader: &Loader, usage: vk::BufferUsageFlags) -> Result<BoundBuffer<T>> where T::Write: DescriptorWrite {
     let buffer_ci = BufferCreateInfo {
         size: std::mem::size_of::<T>() as u64,
         name: None,
@@ -294,7 +293,6 @@ pub fn get_bound_buffer<T: Bindable + Copy, W: DescriptorWrite>(loader: &Loader,
     Ok(BoundBuffer {
         buffer,
         mapping: Some(mapping),
-        _phantom: PhantomData,
         inner: Cell::default()
     })
 }

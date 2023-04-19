@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap};
 
 use crate::{loader::Loader, pipeline::Shader, prelude::*};
 use anyhow::Result;
@@ -13,13 +13,18 @@ pub trait BindableVec {
 }
 
 pub trait Bindable: Copy + Default {
+    type Write: DescriptorWrite;
+
     fn binding(&self) -> BindingDescription;
     fn pool_size(&self) -> vk::DescriptorPoolSize;
 }
 
 pub trait DescriptorWrite {
-    fn write(self, loader: &Loader, set: vk::DescriptorSet);
+    fn write(&mut self, loader: &Loader, sets: &ParitySet<vk::DescriptorSet>);
     fn binding(&self) -> BindingDescription;
+    fn is_constant(&self) -> bool {
+        false
+    } 
 }
 
 pub trait DescriptorWriter {
@@ -67,7 +72,7 @@ impl<T: Bindable + Copy> FromTypedBuffer<T> for UniformWrite {
 }
 
 impl DescriptorWrite for UniformWrite {
-    fn write(mut self, loader: &Loader, set: vk::DescriptorSet) {
+    fn write(&mut self, loader: &Loader, sets: &ParitySet<vk::DescriptorSet>) {
         let write = self.with_write_mut(|write| {
             let mut dummy = vk::WriteDescriptorSet::builder();
             std::mem::swap(&mut dummy, write);
@@ -77,7 +82,7 @@ impl DescriptorWrite for UniformWrite {
         unsafe {
             loader
                 .device
-                .update_descriptor_sets(&[write.dst_set(set).build()], &[])
+                .update_descriptor_sets(&[write.dst_set(sets.even).build()], &[])
         }
     }
 
@@ -184,7 +189,7 @@ pub fn get_layouts(loader: &Loader, shaders: &[&dyn Shader]) -> Result<Layouts> 
     })
 }
 
-pub unsafe fn get_descriptors(loader: &Loader, writes: Vec<Box<dyn DescriptorWrite>>) {
+pub unsafe fn get_descriptors(loader: &Loader, layouts: &Layouts, writes: Vec<Box<dyn DescriptorWrite>>) -> Result<(vk::DescriptorPool, HashMap<DescriptorFrequency, ParitySet<vk::DescriptorSet>>)> {
     let pool_sizes = writes.iter()
         .map(|write| {
             let binding = write.binding();
@@ -200,4 +205,24 @@ pub unsafe fn get_descriptors(loader: &Loader, writes: Vec<Box<dyn DescriptorWri
         .max_sets(8);
 
     let pool = loader.device.create_descriptor_pool(&pool_ci, None)?;
+
+    let sets = layouts.descriptors.iter()
+        .map(|(&freq, &layout)| {
+            let layouts = [layout; 2];
+            let alloc_info = vk::DescriptorSetAllocateInfo::builder()
+                .descriptor_pool(pool)
+                .set_layouts(&layouts);
+
+            let sets = ParitySet::from(loader.device.allocate_descriptor_sets(&alloc_info)?);
+
+            Ok((freq, sets))
+        })
+        .collect::<Result<HashMap<_, _>>>()?;
+
+    for mut write in writes {
+        let set = sets.get(&write.binding().frequency).unwrap();
+        write.as_mut().write(loader, &set);
+    }
+
+    Ok((pool, sets))
 }

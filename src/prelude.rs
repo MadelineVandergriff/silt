@@ -152,3 +152,31 @@ impl Context {
         self.inner.borrow()
     }
 }
+
+#[derive(Clone, Copy, Hash, Debug)]
+pub enum Parity {
+    Even, Odd
+}
+
+pub struct ParitySet<T> {
+    pub even: T,
+    pub odd: T
+}
+
+impl<T> From<Vec<T>> for ParitySet<T> {
+    fn from(mut value: Vec<T>) -> Self {
+        Self {
+            even: value.remove(0),
+            odd: value.remove(1)
+        }
+    }
+}
+
+impl<T> ParitySet<T> {
+    pub fn get(&self, parity: Parity) -> &T {
+        match parity {
+            Parity::Even => &self.even,
+            Parity::Odd => &self.odd,
+        }
+    }
+}
