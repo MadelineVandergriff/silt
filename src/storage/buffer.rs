@@ -11,6 +11,7 @@ pub struct Buffer {
     pub size: vk::DeviceSize,
 }
 
+#[derive(Debug, Clone, Copy)]
 pub struct BufferCreateInfo {
     pub size: vk::DeviceSize,
     pub name: Option<&'static str>,
@@ -19,35 +20,35 @@ pub struct BufferCreateInfo {
 }
 
 pub struct BoundBuffer<T: Bindable> where T::Write: DescriptorWrite {
-    pub buffer: Buffer,
-    pub mapping: Option<MemoryMapping<'static, T>>,
+    pub buffers: ParitySet<Buffer>,
+    pub mappings: Option<ParitySet<MemoryMapping<'static, T>>>,
     inner: Cell<T>,
 }
 
 impl<T: Bindable> BoundBuffer<T> {
-    fn copy(&self, loader: &Loader, value: &T) {
-        if let Some(ref mapping) = self.mapping {
-            mapping.copy_from_slice(std::slice::from_ref(value));
+    fn copy(&self, loader: &Loader, parity: Parity, value: &T) {
+        if let Some(ref mapping) = self.mappings {
+            mapping.get(parity).copy_from_slice(std::slice::from_ref(value));
         } else {
-            unsafe { map_buffer(loader, &self.buffer).copy_from_slice(std::slice::from_ref(value)) };
+            unsafe { map_buffer(loader, &self.buffers.get(parity)).copy_from_slice(std::slice::from_ref(value)) };
         }
     }
 
-    pub fn update(&self, loader: &Loader, f: impl FnOnce(&mut T)) {
+    pub fn update(&self, loader: &Loader, parity: Parity, f: impl FnOnce(&mut T)) {
         let mut value = self.inner.get();
         f(&mut value);
-        self.copy(loader, &value);
+        self.copy(loader, parity, &value);
         self.inner.set(value);
     }
 }
 
-pub trait FromTypedBuffer<T: Bindable> {
-    fn from(value: &Buffer) -> Self;
+pub trait FromTypedBufferParity<T: Bindable> {
+    fn from(value: &ParitySet<Buffer>) -> Self;
 }
 
-impl<T: Bindable> DescriptorWriter for BoundBuffer<T> where T::Write: DescriptorWrite + FromTypedBuffer<T> + 'static {
+impl<T: Bindable> DescriptorWriter for BoundBuffer<T> where T::Write: DescriptorWrite + FromTypedBufferParity<T> + 'static {
     fn writer(&self) -> Box<dyn DescriptorWrite> {
-        Box::new(<T::Write as FromTypedBuffer<T>>::from(&self.buffer))
+        Box::new(<T::Write as FromTypedBufferParity<T>>::from(&self.buffers))
     }
 }
 
@@ -287,12 +288,12 @@ pub fn get_bound_buffer<T: Bindable + Copy>(loader: &Loader, usage: vk::BufferUs
         location: vk::MemoryLocation::CpuToGpu,
     };
 
-    let buffer = unsafe { create_buffer(loader, buffer_ci)? };
-    let mapping = unsafe { map_buffer_persistent(loader, &buffer) };
+    let buffers = ParitySet::from_fn(|| unsafe { create_buffer(loader, buffer_ci).unwrap() });
+    let mappings = buffers.map(|buffer| unsafe { map_buffer_persistent(loader, buffer) });
 
     Ok(BoundBuffer {
-        buffer,
-        mapping: Some(mapping),
+        buffers,
+        mappings: Some(mappings),
         inner: Cell::default()
     })
 }

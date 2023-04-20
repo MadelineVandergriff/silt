@@ -23,10 +23,11 @@ fn main() {
     let (loader, handles) = Loader::new(loader_ci).unwrap();
 
     let bound = get_bound_buffer::<MVP>(&loader, vk::BufferUsageFlags::UNIFORM_BUFFER).unwrap();
-    bound.update(&loader, |mvp| {
+    bound.update(&loader, Parity::Even, |mvp| {
         mvp.model *= glam::Mat4::from_rotation_x(std::f32::consts::FRAC_PI_8);
     });
-    destroy_buffer(&loader, bound.buffer);
+    destroy_buffer(&loader, bound.buffers.even);
+    destroy_buffer(&loader, bound.buffers.odd);
 
     std::thread::sleep(std::time::Duration::from_secs(1));
 }

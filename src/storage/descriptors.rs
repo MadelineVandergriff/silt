@@ -6,7 +6,7 @@ use impl_trait_for_tuples::impl_for_tuples;
 use itertools::Itertools;
 use ouroboros::self_referencing;
 
-use super::buffer::{Buffer, FromTypedBuffer};
+use super::buffer::{Buffer, FromTypedBufferParity};
 
 pub trait BindableVec {
     fn bindings(&self) -> Vec<BindingDescription>;
@@ -31,63 +31,54 @@ pub trait DescriptorWriter {
     fn writer(&self) -> Box<dyn DescriptorWrite>;
 }
 
-#[self_referencing]
 pub struct UniformWrite {
     binding: BindingDescription,
-    info: vk::DescriptorBufferInfo,
-    #[borrows(info)]
-    #[covariant]
-    write: vk::WriteDescriptorSetBuilder<'this>,
+    info: ParitySet<vk::DescriptorBufferInfo>,
 }
 
 impl UniformWrite {
-    pub fn create<T: Bindable + Default>(info: vk::DescriptorBufferInfo) -> UniformWrite {
-        let binding = T::default().binding();
-
-        UniformWriteBuilder {
-            binding,
-            info,
-            write_builder: |info: &vk::DescriptorBufferInfo| {
-                vk::WriteDescriptorSet::builder()
-                    .buffer_info(std::slice::from_ref(info))
-                    .descriptor_type(binding.descriptor_type)
-                    .dst_binding(binding.binding)
-                    .dst_array_element(0)
-            },
+    pub fn new<T: Bindable + Default>(info: ParitySet<vk::DescriptorBufferInfo>) -> UniformWrite {
+        UniformWrite {
+            binding: T::default().binding(),
+            info
         }
-        .build()
     }
 }
 
-impl<T: Bindable + Copy> FromTypedBuffer<T> for UniformWrite {
-    fn from(value: &Buffer) -> Self {
-        let info = vk::DescriptorBufferInfo::builder()
-            .buffer(value.buffer)
+impl<T: Bindable + Copy> FromTypedBufferParity<T> for UniformWrite {
+    fn from(value: &ParitySet<Buffer>) -> Self {
+        let info = |buffer: &Buffer| { vk::DescriptorBufferInfo::builder()
+            .buffer(buffer.buffer)
             .offset(0)
-            .range(value.size)
-            .build();
+            .range(buffer.size)
+            .build()
+        };
 
-        Self::create::<T>(info)
+        Self::new::<T>(ParitySet { even: info(&value.even), odd: info(&value.odd) })
     }
 }
 
 impl DescriptorWrite for UniformWrite {
     fn write(&mut self, loader: &Loader, sets: &ParitySet<vk::DescriptorSet>) {
-        let write = self.with_write_mut(|write| {
-            let mut dummy = vk::WriteDescriptorSet::builder();
-            std::mem::swap(&mut dummy, write);
-            dummy
-        });
+        let write = |info| {
+            vk::WriteDescriptorSet::builder()
+                .buffer_info(std::slice::from_ref(info))
+                .descriptor_type(self.binding.descriptor_type)
+                .dst_binding(self.binding.binding)
+        };
 
         unsafe {
             loader
                 .device
-                .update_descriptor_sets(&[write.dst_set(sets.even).build()], &[])
+                .update_descriptor_sets(&[
+                    write(&self.info.even).dst_set(sets.even).build(),
+                    write(&self.info.odd).dst_set(sets.odd).build()
+                ], &[])
         }
     }
 
     fn binding(&self) -> BindingDescription {
-        *self.borrow_binding()
+        self.binding
     }
 }
 

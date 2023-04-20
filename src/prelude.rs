@@ -158,6 +158,7 @@ pub enum Parity {
     Even, Odd
 }
 
+#[derive(Clone)]
 pub struct ParitySet<T> {
     pub even: T,
     pub odd: T
@@ -177,6 +178,17 @@ impl<T> ParitySet<T> {
         match parity {
             Parity::Even => &self.even,
             Parity::Odd => &self.odd,
+        }
+    }
+
+    pub fn from_fn(mut f: impl FnMut() -> T) -> Self {
+        ParitySet { even: f(), odd: f() }
+    }
+
+    pub fn map<R>(&self, f: impl Fn(&T) -> R) -> ParitySet<R> {
+        ParitySet {
+            even: f(&self.even),
+            odd: f(&self.odd)
         }
     }
 }
