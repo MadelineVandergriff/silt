@@ -1,9 +1,9 @@
-use std::{collections::HashMap};
+use std::collections::HashMap;
 
 use crate::{loader::Loader, pipeline::Shader, prelude::*};
 use anyhow::Result;
 use impl_trait_for_tuples::impl_for_tuples;
-use itertools::Itertools;
+use itertools::{Itertools, izip};
 use ouroboros::self_referencing;
 
 use super::buffer::{Buffer, FromTypedBufferParity};
@@ -24,7 +24,7 @@ pub trait DescriptorWrite {
     fn binding(&self) -> BindingDescription;
     fn is_constant(&self) -> bool {
         false
-    } 
+    }
 }
 
 pub trait DescriptorWriter {
@@ -40,40 +40,46 @@ impl UniformWrite {
     pub fn new<T: Bindable + Default>(info: ParitySet<vk::DescriptorBufferInfo>) -> UniformWrite {
         UniformWrite {
             binding: T::default().binding(),
-            info
+            info,
         }
     }
 }
 
 impl<T: Bindable + Copy> FromTypedBufferParity<T> for UniformWrite {
     fn from(value: &ParitySet<Buffer>) -> Self {
-        let info = |buffer: &Buffer| { vk::DescriptorBufferInfo::builder()
-            .buffer(buffer.buffer)
-            .offset(0)
-            .range(buffer.size)
-            .build()
-        };
-
-        Self::new::<T>(ParitySet { even: info(&value.even), odd: info(&value.odd) })
+        Self::new::<T>(
+            value
+                .iter()
+                .map(|buffer| {
+                    vk::DescriptorBufferInfo::builder()
+                        .buffer(buffer.buffer)
+                        .offset(0)
+                        .range(buffer.size)
+                        .build()
+                })
+                .collect(),
+        )
     }
 }
 
 impl DescriptorWrite for UniformWrite {
     fn write(&mut self, loader: &Loader, sets: &ParitySet<vk::DescriptorSet>) {
-        let write = |info| {
-            vk::WriteDescriptorSet::builder()
+        let writes = izip!(self.info.iter(), sets.iter())
+            .map(|(info, set)| {
+                vk::WriteDescriptorSet::builder()
                 .buffer_info(std::slice::from_ref(info))
                 .descriptor_type(self.binding.descriptor_type)
                 .dst_binding(self.binding.binding)
-        };
+                .dst_set(*set)
+                .build()
+            })
+            .collect_vec();
 
         unsafe {
-            loader
-                .device
-                .update_descriptor_sets(&[
-                    write(&self.info.even).dst_set(sets.even).build(),
-                    write(&self.info.odd).dst_set(sets.odd).build()
-                ], &[])
+            loader.device.update_descriptor_sets(
+                &writes,
+                &[],
+            )
         }
     }
 
@@ -149,29 +155,32 @@ pub fn get_layouts(loader: &Loader, shaders: &[&dyn Shader]) -> Result<Layouts> 
         )
         .into_iter()
         .map(|(k, v)| {
-            let bindings = 
-                v.into_values()
-                    .map(|binding| {
-                        vk::DescriptorSetLayoutBinding::builder()
-                            .descriptor_count(binding.descriptor_count)
-                            .stage_flags(binding.stage_flags)
-                            .descriptor_type(binding.descriptor_type)
-                            .binding(binding.binding)
-                            .build()
-                    })
-                    .collect_vec();
-            
-            let ci = vk::DescriptorSetLayoutCreateInfo::builder()
-                    .bindings(&bindings);
-            let descriptor = unsafe { loader.device.create_descriptor_set_layout(&ci, None).unwrap() };
+            let bindings = v
+                .into_values()
+                .map(|binding| {
+                    vk::DescriptorSetLayoutBinding::builder()
+                        .descriptor_count(binding.descriptor_count)
+                        .stage_flags(binding.stage_flags)
+                        .descriptor_type(binding.descriptor_type)
+                        .binding(binding.binding)
+                        .build()
+                })
+                .collect_vec();
+
+            let ci = vk::DescriptorSetLayoutCreateInfo::builder().bindings(&bindings);
+            let descriptor = unsafe {
+                loader
+                    .device
+                    .create_descriptor_set_layout(&ci, None)
+                    .unwrap()
+            };
 
             (k, descriptor)
         })
         .collect::<HashMap<_, _>>();
-    
+
     let set_layouts = descriptors.values().map(|&v| v).collect_vec();
-    let pipeline_ci =
-        vk::PipelineLayoutCreateInfo::builder().set_layouts(&set_layouts);
+    let pipeline_ci = vk::PipelineLayoutCreateInfo::builder().set_layouts(&set_layouts);
     let pipeline = unsafe { loader.device.create_pipeline_layout(&pipeline_ci, None)? };
 
     Ok(Layouts {
@@ -180,8 +189,16 @@ pub fn get_layouts(loader: &Loader, shaders: &[&dyn Shader]) -> Result<Layouts> 
     })
 }
 
-pub unsafe fn get_descriptors(loader: &Loader, layouts: &Layouts, writes: Vec<Box<dyn DescriptorWrite>>) -> Result<(vk::DescriptorPool, HashMap<DescriptorFrequency, ParitySet<vk::DescriptorSet>>)> {
-    let pool_sizes = writes.iter()
+pub unsafe fn get_descriptors(
+    loader: &Loader,
+    layouts: &Layouts,
+    writes: Vec<Box<dyn DescriptorWrite>>,
+) -> Result<(
+    vk::DescriptorPool,
+    HashMap<DescriptorFrequency, ParitySet<vk::DescriptorSet>>,
+)> {
+    let pool_sizes = writes
+        .iter()
         .map(|write| {
             let binding = write.binding();
             vk::DescriptorPoolSize {
@@ -197,7 +214,9 @@ pub unsafe fn get_descriptors(loader: &Loader, layouts: &Layouts, writes: Vec<Bo
 
     let pool = loader.device.create_descriptor_pool(&pool_ci, None)?;
 
-    let sets = layouts.descriptors.iter()
+    let sets = layouts
+        .descriptors
+        .iter()
         .map(|(&freq, &layout)| {
             let layouts = [layout; 2];
             let alloc_info = vk::DescriptorSetAllocateInfo::builder()
