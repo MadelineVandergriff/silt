@@ -2,7 +2,7 @@ use silt::loader::*;
 use silt::model::MVP;
 use silt::prelude::*;
 use silt::properties::{DeviceFeaturesRequest, DeviceFeatures};
-use silt::storage::buffer::{get_bound_buffer, destroy_buffer};
+use silt::storage::buffer::{get_bound_buffer};
 use silt::storage::descriptors::UniformWrite;
 use silt::sync::{QueueRequest, QueueType};
 
@@ -26,8 +26,7 @@ fn main() {
     bound.update(&loader, Parity::Even, |mvp| {
         mvp.model *= glam::Mat4::from_rotation_x(std::f32::consts::FRAC_PI_8);
     });
-    destroy_buffer(&loader, bound.buffers.even);
-    destroy_buffer(&loader, bound.buffers.odd);
+    bound.destroy(&loader);
 
     std::thread::sleep(std::time::Duration::from_secs(1));
 }

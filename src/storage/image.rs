@@ -17,6 +17,14 @@ pub struct Image {
     pub layout: Cell<vk::ImageLayout>,
 }
 
+impl Destructible for Image {
+    fn destroy(self, loader: &Loader) {
+        self.view.destroy(loader);
+        self.image.destroy(loader);
+        self.allocation.destroy(loader);
+    }
+}
+
 pub struct ImageFile {
     pub pixels: image::RgbaImage,
     pub width: u32,
@@ -397,7 +405,7 @@ pub unsafe fn upload_texture(loader: &Loader, pool: &CommandPool, file: ImageFil
     transition_layout(loader, pool, &image, vk::ImageLayout::TRANSFER_DST_OPTIMAL)?;
     copy_buffer_to_whole_image(loader, pool, &src_buffer, &image)?;
     generate_mipmaps(loader, pool, &image);
-    destroy_buffer(loader, src_buffer);
+    src_buffer.destroy(loader);
 
     Ok(image)
 }

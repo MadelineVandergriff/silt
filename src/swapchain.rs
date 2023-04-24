@@ -178,22 +178,26 @@ impl Swapchain {
 
     pub unsafe fn cleanup(self, loader: &Loader) -> Result<()> {
         loader.device.device_wait_idle()?;
+        self.destroy(loader);
+        Ok(())
+    }
+}
 
-        for SwapFrame{view, framebuffer, ..} in self.frames {
-            loader.device.destroy_framebuffer(framebuffer, None);
-            loader.device.destroy_image_view(view, None);
+impl Destructible for SwapFrame {
+    fn destroy(self, loader: &Loader) {
+        self.framebuffer.destroy(loader);
+        self.view.destroy(loader);
+    }
+}
+
+impl Destructible for Swapchain {
+    fn destroy(self, loader: &Loader) {
+        for frame in self.frames {
+            frame.destroy(loader);
         }
 
-        loader.device.destroy_image_view(self.depth.view, None);
-        loader.device.destroy_image(self.depth.image, None);
-        loader.allocator.free(self.depth.allocation)?;
-
-        loader.device.destroy_image_view(self.color.view, None);
-        loader.device.destroy_image(self.color.image, None);
-        loader.allocator.free(self.color.allocation)?;
-
-        loader.swapchain.destroy_swapchain(self.swapchain, None);
-
-        Ok(())
+        self.color.destroy(loader);
+        self.depth.destroy(loader);
+        self.swapchain.destroy(loader);
     }
 }

@@ -11,6 +11,13 @@ pub struct Buffer {
     pub size: vk::DeviceSize,
 }
 
+impl Destructible for Buffer {
+    fn destroy(self, loader: &Loader) {
+        self.buffer.destroy(loader);
+        self.allocation.destroy(loader);
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct BufferCreateInfo {
     pub size: vk::DeviceSize,
@@ -23,6 +30,14 @@ pub struct BoundBuffer<T: Bindable> where T::Write: DescriptorWrite {
     pub buffers: ParitySet<Buffer>,
     pub mappings: Option<ParitySet<MemoryMapping<'static, T>>>,
     inner: Cell<T>,
+}
+
+impl<T: Bindable> Destructible for BoundBuffer<T> {
+    fn destroy(self, loader: &Loader) {
+        for buffer in self.buffers.into_iter() {
+            buffer.destroy(loader);
+        }
+    }
 }
 
 impl<T: Bindable> BoundBuffer<T> {
@@ -81,11 +96,6 @@ pub unsafe fn create_buffer(loader: &Loader, create_info: BufferCreateInfo) -> R
         allocation,
         size: requirements.size,
     })
-}
-
-pub fn destroy_buffer(loader: &Loader, buffer: Buffer) {
-    unsafe { loader.device.destroy_buffer(buffer.buffer, None) };
-    loader.allocator.free(buffer.allocation).unwrap();
 }
 
 pub unsafe fn copy_buffer(
@@ -275,7 +285,7 @@ pub fn upload_to_gpu<T: Copy>(
     let buffer = unsafe { create_buffer(loader, buffer_ci)? };
 
     unsafe { copy_entire_buffer(loader, pool, &staging, &buffer)? };
-    destroy_buffer(loader, staging);
+    staging.destroy(loader);
 
     Ok(buffer)
 }

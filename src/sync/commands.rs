@@ -9,6 +9,12 @@ pub struct CommandPool {
     pub flags: vk::CommandPoolCreateFlags,
 }
 
+impl Destructible for CommandPool {
+    fn destroy(self, loader: &Loader) {
+        self.pool.destroy(loader);
+    }
+}
+
 pub fn get_command_pools(
     loader: &Loader,
     queues: &[QueueHandle],

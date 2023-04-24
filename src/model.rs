@@ -52,6 +52,13 @@ pub struct ModelBuffer {
     pub indices: Buffer,
 }
 
+impl Destructible for ModelBuffer {
+    fn destroy(self, loader: &Loader) {
+        self.vertices.destroy(loader);
+        self.indices.destroy(loader);
+    }
+}
+
 impl ModelBuffer {
     pub fn create(loader: &Loader, pool: &CommandPool, vertices: &[Vertex], indices: &[u32]) -> Result<Self> {
         let vertices = buffer::upload_to_gpu(
@@ -73,11 +80,6 @@ impl ModelBuffer {
         Ok(Self {
             vertices, indices
         })
-    }
-
-    pub fn destroy(self, loader: &Loader) {
-        buffer::destroy_buffer(loader, self.vertices);
-        buffer::destroy_buffer(loader, self.indices);
     }
 }
 

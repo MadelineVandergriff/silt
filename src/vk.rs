@@ -5,6 +5,7 @@ pub use gpu_allocator::vulkan::AllocatorCreateDesc as AllocatorCreateInfo;
 pub use gpu_allocator::{AllocationError, AllocatorDebugSettings, MemoryLocation};
 
 use uuid::Uuid;
+use crate::prelude::Loader;
 
 /// Handle to gpu_allocator::vulkan::Allocation
 #[derive(Clone, Copy, Default, Debug, PartialEq, Eq, Hash)]

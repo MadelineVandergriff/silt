@@ -1,12 +1,10 @@
-use std::collections::HashMap;
+use crate::{pipeline::Shader, prelude::*};
+use super::buffer::{Buffer, FromTypedBufferParity};
 
-use crate::{loader::Loader, pipeline::Shader, prelude::*};
+use std::collections::HashMap;
 use anyhow::Result;
 use impl_trait_for_tuples::impl_for_tuples;
 use itertools::{Itertools, izip};
-use ouroboros::self_referencing;
-
-use super::buffer::{Buffer, FromTypedBufferParity};
 
 pub trait BindableVec {
     fn bindings(&self) -> Vec<BindingDescription>;
@@ -113,6 +111,15 @@ impl BindableVec for () {
 pub struct Layouts {
     pub descriptors: HashMap<DescriptorFrequency, vk::DescriptorSetLayout>,
     pub pipeline: vk::PipelineLayout,
+}
+
+impl Destructible for Layouts {
+    fn destroy(self, loader: &Loader) {
+        for descriptor_layout in self.descriptors.into_values() {
+            descriptor_layout.destroy(loader);
+        }
+        self.pipeline.destroy(loader);
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

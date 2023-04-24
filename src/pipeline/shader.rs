@@ -11,6 +11,12 @@ pub struct VertexShader {
     vertex: Rc<dyn BindableVertex>,
 }
 
+impl Destructible for VertexShader {
+    fn destroy(self, loader: &Loader) {
+        self.shader.destroy(loader);
+    }
+}
+
 impl VertexShader {
     pub fn new<V, B>(loader: &Loader, code: ShaderCode) -> Result<Self>
     where
@@ -59,6 +65,12 @@ pub struct FragmentShader {
     bindings: Rc<dyn BindableVec>,
 }
 
+impl Destructible for FragmentShader {
+    fn destroy(self, loader: &Loader) {
+        self.shader.destroy(loader);
+    }
+}
+
 impl FragmentShader {
     pub fn new<B>(loader: &Loader, code: ShaderCode) -> Result<Self>
     where
@@ -105,6 +117,13 @@ pub trait Shader {
 pub struct Shaders {
     pub vertex: VertexShader,
     pub fragment: FragmentShader,
+}
+
+impl Destructible for Shaders {
+    fn destroy(self, loader: &Loader) {
+        self.vertex.destroy(loader);
+        self.fragment.destroy(loader);
+    }
 }
 
 impl Shaders {
