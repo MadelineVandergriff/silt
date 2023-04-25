@@ -1,4 +1,4 @@
-use super::{image::Image, descriptors::{Bindable, DescriptorWrite, DescriptorWriter}};
+use super::{image::Image, descriptors::{Bindable, DescriptorWrite}};
 use crate::prelude::*;
 use crate::sync::CommandPool;
 use anyhow::{anyhow, Result};
@@ -26,7 +26,7 @@ pub struct BufferCreateInfo {
     pub location: vk::MemoryLocation,
 }
 
-pub struct BoundBuffer<T: Bindable> where T::Write: DescriptorWrite {
+pub struct BoundBuffer<T: Bindable> {
     pub buffers: ParitySet<Buffer>,
     pub mappings: Option<ParitySet<MemoryMapping<'static, T>>>,
     inner: Cell<T>,
@@ -54,16 +54,6 @@ impl<T: Bindable> BoundBuffer<T> {
         f(&mut value);
         self.copy(loader, parity, &value);
         self.inner.set(value);
-    }
-}
-
-pub trait FromTypedBufferParity<T: Bindable> {
-    fn from(value: &ParitySet<Buffer>) -> Self;
-}
-
-impl<T: Bindable> DescriptorWriter for BoundBuffer<T> where T::Write: DescriptorWrite + FromTypedBufferParity<T> + 'static {
-    fn writer(&self) -> Box<dyn DescriptorWrite> {
-        Box::new(<T::Write as FromTypedBufferParity<T>>::from(&self.buffers))
     }
 }
 
@@ -290,7 +280,7 @@ pub fn upload_to_gpu<T: Copy>(
     Ok(buffer)
 }
 
-pub fn get_bound_buffer<T: Bindable + Copy>(loader: &Loader, usage: vk::BufferUsageFlags) -> Result<BoundBuffer<T>> where T::Write: DescriptorWrite {
+pub fn get_bound_buffer<T: Bindable + Copy>(loader: &Loader, usage: vk::BufferUsageFlags) -> Result<BoundBuffer<T>> {
     let buffer_ci = BufferCreateInfo {
         size: std::mem::size_of::<T>() as u64,
         name: None,

@@ -4,7 +4,7 @@ use memoffset::offset_of;
 use crate::pipeline::BindableVertex;
 use crate::prelude::*;
 use crate::storage::buffer::{self, Buffer};
-use crate::storage::descriptors::{Bindable, BindingDescription, DescriptorFrequency, UniformWrite};
+use crate::storage::descriptors::{Bindable, BindingDescription, DescriptorFrequency};
 use crate::sync::CommandPool;
 
 #[derive(Clone, Copy, Debug)]
@@ -91,8 +91,6 @@ pub struct MVP {
 }
 
 impl Bindable for MVP {
-    type Write = UniformWrite;
-
     fn binding(&self) -> BindingDescription {
         BindingDescription {
             descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
@@ -101,13 +99,6 @@ impl Bindable for MVP {
             descriptor_count: 1,
             stage_flags: vk::ShaderStageFlags::empty(),
         }
-    }
-
-    fn pool_size(&self) -> vk::DescriptorPoolSize {
-        vk::DescriptorPoolSize::builder()
-            .ty(vk::DescriptorType::UNIFORM_BUFFER)
-            .descriptor_count(1)
-            .build()
     }
 }
 

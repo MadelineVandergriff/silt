@@ -1,5 +1,4 @@
 use crate::{pipeline::Shader, prelude::*};
-use super::buffer::{Buffer, FromTypedBufferParity};
 
 use std::collections::HashMap;
 use anyhow::Result;
@@ -11,78 +10,49 @@ pub trait BindableVec {
 }
 
 pub trait Bindable: Copy + Default {
-    type Write: DescriptorWrite;
-
     fn binding(&self) -> BindingDescription;
-    fn pool_size(&self) -> vk::DescriptorPoolSize;
-}
-
-pub trait DescriptorWrite {
-    fn write(&mut self, loader: &Loader, sets: &ParitySet<vk::DescriptorSet>);
-    fn binding(&self) -> BindingDescription;
-    fn is_constant(&self) -> bool {
-        false
+    fn pool_size(&self) -> vk::DescriptorPoolSize {
+        vk::DescriptorPoolSize::builder()
+            .descriptor_count(self.binding().descriptor_count)
+            .ty(self.binding().descriptor_type)
+            .build()
     }
 }
 
-pub trait DescriptorWriter {
-    fn writer(&self) -> Box<dyn DescriptorWrite>;
+#[derive(Clone, Copy, Debug)]
+pub enum ResourceType {
+    Image, Buffer
 }
 
-pub struct UniformWrite {
-    binding: BindingDescription,
-    info: ParitySet<vk::DescriptorBufferInfo>,
+pub struct DescriptorWrite<'a> {
+    pub resource_ty: ResourceType,
+    pub buffer_info: ParitySet<vk::DescriptorBufferInfoBuilder<'a>>,
+    pub image_info: ParitySet<vk::DescriptorImageInfoBuilder<'a>>,
+    pub binding: BindingDescription,
 }
 
-impl UniformWrite {
-    pub fn new<T: Bindable + Default>(info: ParitySet<vk::DescriptorBufferInfo>) -> UniformWrite {
-        UniformWrite {
-            binding: T::default().binding(),
-            info,
-        }
-    }
-}
-
-impl<T: Bindable + Copy> FromTypedBufferParity<T> for UniformWrite {
-    fn from(value: &ParitySet<Buffer>) -> Self {
-        Self::new::<T>(
-            value
-                .iter()
-                .map(|buffer| {
-                    vk::DescriptorBufferInfo::builder()
-                        .buffer(buffer.buffer)
-                        .offset(0)
-                        .range(buffer.size)
-                        .build()
-                })
-                .collect(),
-        )
-    }
-}
-
-impl DescriptorWrite for UniformWrite {
-    fn write(&mut self, loader: &Loader, sets: &ParitySet<vk::DescriptorSet>) {
-        let writes = izip!(self.info.iter(), sets.iter())
-            .map(|(info, set)| {
-                vk::WriteDescriptorSet::builder()
-                .buffer_info(std::slice::from_ref(info))
-                .descriptor_type(self.binding.descriptor_type)
-                .dst_binding(self.binding.binding)
-                .dst_set(*set)
-                .build()
-            })
-            .collect_vec();
-
+impl<'a> DescriptorWrite<'a> {
+    fn write(&self, loader: &Loader, sets: &ParitySet<vk::DescriptorSet>) {
         unsafe {
             loader.device.update_descriptor_sets(
-                &writes,
-                &[],
-            )
-        }
-    }
+                &izip!(self.buffer_info.iter(), self.image_info.iter(), sets.iter())
+                    .map(|(buffer_info, image_info, set)| {
+                        let mut write = vk::WriteDescriptorSet::builder()
+                            .descriptor_type(self.binding.descriptor_type)
+                            .dst_binding(self.binding.binding)
+                            .dst_set(*set);
 
-    fn binding(&self) -> BindingDescription {
-        self.binding
+                        match self.resource_ty {
+                            ResourceType::Image => write = write.image_info(std::slice::from_ref(image_info)),
+                            ResourceType::Buffer => write = write.buffer_info(std::slice::from_ref(buffer_info)),
+                        }
+
+                        write.build()
+                    })
+                    .collect_vec(), 
+                &[]
+            );
+        }
     }
 }
 
@@ -196,18 +166,19 @@ pub fn get_layouts(loader: &Loader, shaders: &[&dyn Shader]) -> Result<Layouts> 
     })
 }
 
-pub unsafe fn get_descriptors(
+pub unsafe fn get_descriptors<'a>(
     loader: &Loader,
     layouts: &Layouts,
-    writes: Vec<Box<dyn DescriptorWrite>>,
+    writes: impl IntoIterator<Item = &'a DescriptorWrite<'a>> + Clone,
 ) -> Result<(
     vk::DescriptorPool,
     HashMap<DescriptorFrequency, ParitySet<vk::DescriptorSet>>,
 )> {
     let pool_sizes = writes
-        .iter()
+        .clone()
+        .into_iter()
         .map(|write| {
-            let binding = write.binding();
+            let binding = write.binding;
             vk::DescriptorPoolSize {
                 ty: binding.descriptor_type,
                 descriptor_count: binding.descriptor_count,
@@ -236,9 +207,9 @@ pub unsafe fn get_descriptors(
         })
         .collect::<Result<HashMap<_, _>>>()?;
 
-    for mut write in writes {
-        let set = sets.get(&write.binding().frequency).unwrap();
-        write.as_mut().write(loader, &set);
+    for write in writes {
+        let set = sets.get(&write.binding.frequency).unwrap();
+        write.write(loader, &set);
     }
 
     Ok((pool, sets))

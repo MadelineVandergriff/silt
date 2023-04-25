@@ -3,7 +3,6 @@ use silt::model::MVP;
 use silt::prelude::*;
 use silt::properties::{DeviceFeaturesRequest, DeviceFeatures};
 use silt::storage::buffer::{get_bound_buffer};
-use silt::storage::descriptors::UniformWrite;
 use silt::sync::{QueueRequest, QueueType};
 
 fn main() {
