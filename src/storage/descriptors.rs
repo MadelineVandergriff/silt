@@ -24,6 +24,10 @@ pub enum ResourceType {
     Image, Buffer
 }
 
+pub trait DescriptorWriter {
+    fn get_write<'a>(&'a self) -> DescriptorWrite<'a>;
+}
+
 pub struct DescriptorWrite<'a> {
     pub resource_ty: ResourceType,
     pub buffer_info: ParitySet<vk::DescriptorBufferInfoBuilder<'a>>,
@@ -32,6 +36,24 @@ pub struct DescriptorWrite<'a> {
 }
 
 impl<'a> DescriptorWrite<'a> {
+    pub fn from_buffer(buffer_info: ParitySet<vk::DescriptorBufferInfoBuilder<'a>>, binding: BindingDescription) -> Self {
+        Self {
+            resource_ty: ResourceType::Buffer,
+            buffer_info,
+            image_info: ParitySet::from_fn(|| vk::DescriptorImageInfo::builder()),
+            binding
+        }
+    }
+
+    pub fn from_image(image_info: ParitySet<vk::DescriptorImageInfoBuilder<'a>>, binding: BindingDescription) -> Self {
+        Self {
+            resource_ty: ResourceType::Buffer,
+            buffer_info: ParitySet::from_fn(|| vk::DescriptorBufferInfo::builder()),
+            image_info,
+            binding
+        }
+    }
+
     fn write(&self, loader: &Loader, sets: &ParitySet<vk::DescriptorSet>) {
         unsafe {
             loader.device.update_descriptor_sets(

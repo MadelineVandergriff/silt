@@ -5,7 +5,7 @@ use anyhow::Result;
 use cached::proc_macro::once;
 use itertools::Itertools;
 
-use super::buffer::*;
+use super::{buffer::*, descriptors::{DescriptorWriter, DescriptorWrite, BindingDescription}};
 
 #[derive(Debug, Clone)]
 pub struct Image {
@@ -22,6 +22,27 @@ impl Destructible for Image {
         self.view.destroy(loader);
         self.image.destroy(loader);
         self.allocation.destroy(loader);
+    }
+}
+
+pub struct SampledImage {
+    pub image: Image,
+    pub sampler: vk::Sampler,
+    pub properties: vk::SamplerCreateInfo,
+    pub binding: BindingDescription,
+}
+
+impl DescriptorWriter for SampledImage {
+    fn get_write<'a>(&'a self) -> DescriptorWrite<'a> {
+        DescriptorWrite::from_image(
+            ParitySet::from_fn(|| {
+                vk::DescriptorImageInfo::builder()
+                    .image_layout(self.image.layout.get())
+                    .image_view(self.image.view)
+                    .sampler(self.sampler)
+            }),
+            self.binding
+        )
     }
 }
 
@@ -410,21 +431,28 @@ pub unsafe fn upload_texture(loader: &Loader, pool: &CommandPool, file: ImageFil
     Ok(image)
 }
 
-pub fn get_sampler(loader: &Loader, features: ProvidedFeatures, image: &Image) -> Result<vk::Sampler> {
+pub fn get_sampler(loader: &Loader, features: ProvidedFeatures, image: Image, binding: BindingDescription) -> Result<SampledImage> {
     let create_info = vk::SamplerCreateInfo::builder()
     .mag_filter(vk::Filter::LINEAR)
     .min_filter(vk::Filter::LINEAR)
     .address_mode_u(vk::SamplerAddressMode::REPEAT)
     .address_mode_v(vk::SamplerAddressMode::REPEAT)
     .address_mode_w(vk::SamplerAddressMode::REPEAT)
-    .anisotropy_enable(true)
+    .anisotropy_enable(features.sampler_anisotropy().is_some())
     .max_anisotropy(features.sampler_anisotropy().unwrap_or_default())
     .border_color(vk::BorderColor::FLOAT_OPAQUE_WHITE)
     .compare_op(vk::CompareOp::ALWAYS)
     .mipmap_mode(vk::SamplerMipmapMode::LINEAR)
     .min_lod(0.)
-    .max_lod(image.mips as f32);
+    .max_lod(image.mips as f32)
+    .build();
 
     let sampler = unsafe { loader.device.create_sampler(&create_info, None)? };
-    Ok(sampler)
+    
+    Ok(SampledImage {
+        image,
+        sampler,
+        properties: create_info,
+        binding
+    })
 }
