@@ -1,8 +1,14 @@
-use super::{image::Image, descriptors::{Bindable, DescriptorWrite, DescriptorWriter}};
+use super::{
+    descriptors::{Bindable, DescriptorWrite, DescriptorWriter, ResourceType},
+    image::Image,
+};
 use crate::prelude::*;
 use crate::sync::CommandPool;
 use anyhow::{anyhow, Result};
-use std::{cell::{RefCell, Cell}, marker::PhantomData};
+use std::{
+    cell::{Cell, RefCell},
+    marker::PhantomData,
+};
 
 #[derive(Clone, Debug)]
 pub struct Buffer {
@@ -26,7 +32,7 @@ pub struct BufferCreateInfo {
     pub location: vk::MemoryLocation,
 }
 
-pub struct BoundBuffer<T: Bindable> where T::Write: DescriptorWrite {
+pub struct BoundBuffer<T: Bindable> {
     pub buffers: ParitySet<Buffer>,
     pub mappings: Option<ParitySet<MemoryMapping<'static, T>>>,
     inner: Cell<T>,
@@ -43,9 +49,14 @@ impl<T: Bindable> Destructible for BoundBuffer<T> {
 impl<T: Bindable> BoundBuffer<T> {
     fn copy(&self, loader: &Loader, parity: Parity, value: &T) {
         if let Some(ref mapping) = self.mappings {
-            mapping.get(parity).copy_from_slice(std::slice::from_ref(value));
+            mapping
+                .get(parity)
+                .copy_from_slice(std::slice::from_ref(value));
         } else {
-            unsafe { map_buffer(loader, &self.buffers.get(parity)).copy_from_slice(std::slice::from_ref(value)) };
+            unsafe {
+                map_buffer(loader, &self.buffers.get(parity))
+                    .copy_from_slice(std::slice::from_ref(value))
+            };
         }
     }
 
@@ -57,13 +68,17 @@ impl<T: Bindable> BoundBuffer<T> {
     }
 }
 
-pub trait FromTypedBufferParity<T: Bindable> {
-    fn from(value: &ParitySet<Buffer>) -> Self;
-}
-
-impl<T: Bindable> DescriptorWriter for BoundBuffer<T> where T::Write: DescriptorWrite + FromTypedBufferParity<T> + 'static {
-    fn writer(&self) -> Box<dyn DescriptorWrite> {
-        Box::new(<T::Write as FromTypedBufferParity<T>>::from(&self.buffers))
+impl<T: Bindable + Default> DescriptorWriter for BoundBuffer<T> {
+    fn get_write<'a>(&'a self) -> DescriptorWrite<'a> {
+        DescriptorWrite::from_buffer(
+            self.buffers.map(|buffer| {
+                vk::DescriptorBufferInfo::builder()
+                    .buffer(buffer.buffer)
+                    .offset(0)
+                    .range(buffer.size)
+            }),
+            T::default().binding()
+        )
     }
 }
 
@@ -204,7 +219,9 @@ impl<'a, T: Copy> Drop for MemoryMapping<'a, T> {
         unsafe {
             self.loader.map(|loader| {
                 if loader.allocator.get_mapped_ptr(self.allocation).is_err() {
-                    loader.device.unmap_memory(loader.allocator.get_memory(self.allocation).unwrap());
+                    loader
+                        .device
+                        .unmap_memory(loader.allocator.get_memory(self.allocation).unwrap());
                 }
             });
         }
@@ -228,7 +245,7 @@ impl<'a, T: Copy> MemoryMapping<'a, T> {
         MemoryMapping {
             loader: None,
             allocation,
-            align: RefCell::new(align)
+            align: RefCell::new(align),
         }
     }
 }
@@ -254,7 +271,10 @@ pub unsafe fn map_buffer<'a, T: Copy>(loader: &'a Loader, buffer: &Buffer) -> Me
     MemoryMapping::new(loader, buffer.allocation, get_align(loader, buffer))
 }
 
-pub unsafe fn map_buffer_persistent<T: Copy>(loader: &Loader, buffer: &Buffer) -> MemoryMapping<'static, T> {
+pub unsafe fn map_buffer_persistent<T: Copy>(
+    loader: &Loader,
+    buffer: &Buffer,
+) -> MemoryMapping<'static, T> {
     MemoryMapping::new_persistent(buffer.allocation, get_align(loader, buffer))
 }
 
@@ -290,7 +310,10 @@ pub fn upload_to_gpu<T: Copy>(
     Ok(buffer)
 }
 
-pub fn get_bound_buffer<T: Bindable + Copy>(loader: &Loader, usage: vk::BufferUsageFlags) -> Result<BoundBuffer<T>> where T::Write: DescriptorWrite {
+pub fn get_bound_buffer<T: Bindable + Copy>(
+    loader: &Loader,
+    usage: vk::BufferUsageFlags,
+) -> Result<BoundBuffer<T>> {
     let buffer_ci = BufferCreateInfo {
         size: std::mem::size_of::<T>() as u64,
         name: None,
@@ -304,6 +327,6 @@ pub fn get_bound_buffer<T: Bindable + Copy>(loader: &Loader, usage: vk::BufferUs
     Ok(BoundBuffer {
         buffers,
         mappings: Some(mappings),
-        inner: Cell::default()
+        inner: Cell::default(),
     })
 }
