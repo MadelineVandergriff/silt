@@ -1,11 +1,16 @@
-use silt::loader::*;
-use silt::model::MVP;
+use silt::pipeline::{VertexShader, FragmentShader, Shaders};
+use silt::{loader::*, swapchain::Swapchain};
+use silt::model::{MVP, Vertex};
 use silt::prelude::*;
 use silt::properties::{DeviceFeaturesRequest, DeviceFeatures};
 use silt::storage::buffer::{get_bound_buffer};
 use silt::sync::{QueueRequest, QueueType};
+use silt::{pipeline, storage::descriptors};
+use silt::shader;
 
-fn main() {
+use anyhow::Result;
+
+fn main() -> Result<()> {
     let loader_ci = LoaderCreateInfo {
         width: 1920,
         height: 1080,
@@ -15,17 +20,24 @@ fn main() {
             prefered: DeviceFeatures::IMAGE_CUBE_ARRAY | DeviceFeatures::SPARSE_BINDING
         },
         queue_requests: vec![
-            QueueRequest { ty: QueueType::Graphics, count: 2 }
+            QueueRequest { ty: QueueType::Graphics, count: 1 }
         ],
     };
 
-    let (loader, handles) = Loader::new(loader_ci).unwrap();
+    let (loader, handles) = Loader::new(loader_ci.clone()).unwrap();
+    let LoaderHandles { debug_messenger, surface, pdevice, queues } = handles;
 
-    let bound = get_bound_buffer::<MVP>(&loader, vk::BufferUsageFlags::UNIFORM_BUFFER).unwrap();
-    bound.update(&loader, Parity::Even, |mvp| {
-        mvp.model *= glam::Mat4::from_rotation_x(std::f32::consts::FRAC_PI_8);
-    });
-    bound.destroy(&loader);
+    let present_pass = unsafe { pipeline::get_present_pass(&loader, pdevice, surface) };
+    let swapchain = unsafe { Swapchain::new(&loader, surface, pdevice, present_pass, loader_ci.width, loader_ci.height) };
+    let vertex = VertexShader::new::<Vertex, ()>(&loader, shader!("../assets/shaders/triangle.vert")?)?;
+    let fragment = FragmentShader::new::<()>(&loader, shader!("../assets/shaders/triangle.frag")?)?;
+    let shaders = Shaders {
+        vertex,
+        fragment
+    };
+    let layouts = descriptors::get_layouts(&loader, &[&shaders.vertex, &shaders.fragment])?;
+    let pipeline = unsafe { pipeline::get_pipeline(&loader, pdevice, present_pass, shaders, &layouts)? };
 
     std::thread::sleep(std::time::Duration::from_secs(1));
+    Ok(())
 }

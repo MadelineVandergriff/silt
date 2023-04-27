@@ -12,6 +12,8 @@ use raw_window_handle::HasRawDisplayHandle;
 use raw_window_handle::HasRawWindowHandle;
 use winit::window::WindowBuilder;
 
+
+#[derive(Debug, Clone)]
 pub struct LoaderCreateInfo {
     pub width: u32,
     pub height: u32,

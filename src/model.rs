@@ -3,11 +3,11 @@ use memoffset::offset_of;
 
 use crate::pipeline::BindableVertex;
 use crate::prelude::*;
-use crate::storage::buffer::{self, Buffer};
+use crate::storage::buffer::{self, Buffer, BoundBuffer, get_bound_buffer};
 use crate::storage::descriptors::{Bindable, BindingDescription, DescriptorFrequency};
 use crate::sync::CommandPool;
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct Vertex {
     pub pos: glam::Vec3,
     pub color: glam::Vec3,
@@ -47,42 +47,6 @@ impl BindableVertex for Vertex {
     }
 }
 
-pub struct ModelBuffer {
-    pub vertices: Buffer,
-    pub indices: Buffer,
-}
-
-impl Destructible for ModelBuffer {
-    fn destroy(self, loader: &Loader) {
-        self.vertices.destroy(loader);
-        self.indices.destroy(loader);
-    }
-}
-
-impl ModelBuffer {
-    pub fn create(loader: &Loader, pool: &CommandPool, vertices: &[Vertex], indices: &[u32]) -> Result<Self> {
-        let vertices = buffer::upload_to_gpu(
-            loader,
-            pool,
-            vertices,
-            vk::BufferUsageFlags::VERTEX_BUFFER,
-            Some("Vertex Buffer"),
-        )?;
-
-        let indices = buffer::upload_to_gpu(
-            loader,
-            pool,
-            indices,
-            vk::BufferUsageFlags::VERTEX_BUFFER,
-            Some("Index Buffer"),
-        )?;
-
-        Ok(Self {
-            vertices, indices
-        })
-    }
-}
-
 #[derive(Clone, Copy, Default, Debug)]
 pub struct MVP {
     pub model: glam::Mat4,
@@ -103,6 +67,42 @@ impl Bindable for MVP {
 }
 
 pub struct Model {
-    pub vertices: Vec<Vertex>,
-    pub indices: Vec<u32>,
+    pub vertices: Buffer,
+    pub indices: Buffer,
+    pub mvp: BoundBuffer<MVP>
 }
+
+impl Destructible for Model {
+    fn destroy(self, loader: &Loader) {
+        self.vertices.destroy(loader);
+        self.indices.destroy(loader);
+        self.mvp.destroy(loader);
+    }
+}
+
+impl Model {
+    pub fn create(loader: &Loader, pool: &CommandPool, vertices: &[Vertex], indices: &[u32]) -> Result<Self> {
+        let vertices = buffer::upload_to_gpu(
+            loader,
+            pool,
+            vertices,
+            vk::BufferUsageFlags::VERTEX_BUFFER,
+            Some("Vertex Buffer"),
+        )?;
+
+        let indices = buffer::upload_to_gpu(
+            loader,
+            pool,
+            indices,
+            vk::BufferUsageFlags::VERTEX_BUFFER,
+            Some("Index Buffer"),
+        )?;
+
+        let mvp = get_bound_buffer(loader, vk::BufferUsageFlags::UNIFORM_BUFFER)?;
+
+        Ok(Self {
+            vertices, indices, mvp
+        })
+    }
+}
+

@@ -12,6 +12,7 @@ pub enum QueueType {
     SparseBinding,
 }
 
+#[derive(Debug, Clone, Copy)]
 pub struct QueueRequest {
     pub ty: QueueType,
     pub count: u32,

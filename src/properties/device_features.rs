@@ -12,6 +12,7 @@ bitflags! {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
 pub struct DeviceFeaturesRequest {
     pub required: DeviceFeatures,
     pub prefered: DeviceFeatures,
