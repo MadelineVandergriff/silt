@@ -1,11 +1,12 @@
 use crate::prelude::*;
 use crate::loader::Loader;
+use crate::properties::get_sample_counts;
 use crate::storage::image;
 
 pub unsafe fn get_present_pass(loader: &Loader, pdevice: vk::PhysicalDevice, surface: vk::SurfaceKHR) -> vk::RenderPass {
     let surface_format = image::get_surface_format(loader, surface, pdevice);
-    let pdevice_limits = loader.instance.get_physical_device_properties(pdevice).limits;
-    let msaa_samples = pdevice_limits.framebuffer_color_sample_counts.min(pdevice_limits.framebuffer_depth_sample_counts);
+    let msaa_samples = get_sample_counts(loader, pdevice);
+    println!("Samples: [{:?}]", msaa_samples);
 
     let color_attachment = vk::AttachmentDescription::builder()
         .format(surface_format.format)

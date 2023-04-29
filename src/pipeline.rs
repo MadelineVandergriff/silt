@@ -1,7 +1,7 @@
 use anyhow::Result;
 use std::ffi::CStr;
 
-use crate::properties::get_msaa_samples;
+use crate::properties::{get_sample_counts};
 use crate::storage::descriptors::Layouts;
 use crate::{loader::Loader, prelude::*};
 
@@ -18,7 +18,7 @@ pub unsafe fn get_pipeline(
     shaders: Shaders,
     layouts: &Layouts,
 ) -> Result<vk::Pipeline> {
-    let msaa_samples = get_msaa_samples(loader, pdevice);
+    let msaa_samples = get_sample_counts(loader, pdevice);
 
     let vertex_stage_create_info = vk::PipelineShaderStageCreateInfo::builder()
         .stage(shaders.vertex.shader_flags())

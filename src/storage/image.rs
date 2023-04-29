@@ -5,7 +5,7 @@ use anyhow::Result;
 use cached::proc_macro::once;
 use itertools::Itertools;
 
-use super::{buffer::*, descriptors::{DescriptorWriter, DescriptorWrite, BindingDescription}};
+use super::{buffer::*, descriptors::{DescriptorWriter, DescriptorWrite, BindingDescription, Bindable}};
 
 #[derive(Debug, Clone)]
 pub struct Image {

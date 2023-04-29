@@ -3,6 +3,7 @@ use itertools::{izip, Itertools};
 
 use crate::loader::Loader;
 use crate::prelude::*;
+use crate::properties::get_sample_counts;
 use crate::storage::image::{self, Image, ImageCreateInfo};
 
 #[derive(Debug, Clone)]
@@ -30,6 +31,7 @@ impl Swapchain {
         width: u32,
         height: u32,
     ) -> Result<Self> {
+        let msaa_samples = get_sample_counts(loader, pdevice);
         let surface_capabilities = loader
             .surface
             .get_physical_device_surface_capabilities(pdevice, surface)?;
@@ -112,7 +114,7 @@ impl Swapchain {
             width: extent.width,
             height: extent.height,
             format: surface_format.format,
-            samples: vk::SampleCountFlags::TYPE_1, // TODO
+            samples: msaa_samples,
             tiling: vk::ImageTiling::OPTIMAL,
             usage: vk::ImageUsageFlags::TRANSIENT_ATTACHMENT
                 | vk::ImageUsageFlags::COLOR_ATTACHMENT,
@@ -131,7 +133,7 @@ impl Swapchain {
             width: extent.width,
             height: extent.height,
             format: depth_format,
-            samples: vk::SampleCountFlags::TYPE_1, // TODO
+            samples: msaa_samples,
             tiling: vk::ImageTiling::OPTIMAL,
             usage: vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
             view_aspect: vk::ImageAspectFlags::DEPTH,

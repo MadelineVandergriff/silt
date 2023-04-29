@@ -1,4 +1,6 @@
+use silt::macros::ShaderOptions;
 use silt::pipeline::{VertexShader, FragmentShader, Shaders};
+use silt::storage::image::SampledImage;
 use silt::{loader::*, swapchain::Swapchain};
 use silt::model::{MVP, Vertex};
 use silt::prelude::*;
@@ -29,8 +31,8 @@ fn main() -> Result<()> {
 
     let present_pass = unsafe { pipeline::get_present_pass(&loader, pdevice, surface) };
     let swapchain = unsafe { Swapchain::new(&loader, surface, pdevice, present_pass, loader_ci.width, loader_ci.height) };
-    let vertex = VertexShader::new::<Vertex, ()>(&loader, shader!("../assets/shaders/triangle.vert")?)?;
-    let fragment = FragmentShader::new::<()>(&loader, shader!("../assets/shaders/triangle.frag")?)?;
+    let vertex = VertexShader::new::<Vertex, MVP>(&loader, shader!("../assets/shaders/model_loading.vert", ShaderOptions::HLSL)?)?;
+    let fragment = FragmentShader::new::<SampledImage>(&loader, shader!("../assets/shaders/model_loading.frag", ShaderOptions::HLSL)?)?;
     let shaders = Shaders {
         vertex,
         fragment
