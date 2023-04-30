@@ -1,5 +1,6 @@
 use silt::macros::ShaderOptions;
 use silt::pipeline::{VertexShader, FragmentShader, Shaders};
+use silt::storage::descriptors::{BindingDescription, DescriptorFrequency};
 use silt::storage::image::SampledImage;
 use silt::{loader::*, swapchain::Swapchain};
 use silt::model::{MVP, Vertex};
@@ -8,9 +9,11 @@ use silt::properties::{DeviceFeaturesRequest, DeviceFeatures};
 use silt::storage::buffer::{get_bound_buffer};
 use silt::sync::{QueueRequest, QueueType};
 use silt::{pipeline, storage::descriptors};
-use silt::shader;
+use silt::{shader, bindable};
 
 use anyhow::Result;
+
+bindable!(Texture, vk::DescriptorType::SAMPLED_IMAGE, DescriptorFrequency::Global, 1);
 
 fn main() -> Result<()> {
     let loader_ci = LoaderCreateInfo {
@@ -32,7 +35,7 @@ fn main() -> Result<()> {
     let present_pass = unsafe { pipeline::get_present_pass(&loader, pdevice, surface) };
     let swapchain = unsafe { Swapchain::new(&loader, surface, pdevice, present_pass, loader_ci.width, loader_ci.height) };
     let vertex = VertexShader::new::<Vertex, MVP>(&loader, shader!("../assets/shaders/model_loading.vert", ShaderOptions::HLSL)?)?;
-    let fragment = FragmentShader::new::<SampledImage>(&loader, shader!("../assets/shaders/model_loading.frag", ShaderOptions::HLSL)?)?;
+    let fragment = FragmentShader::new::<Texture>(&loader, shader!("../assets/shaders/model_loading.frag", ShaderOptions::HLSL)?)?;
     let shaders = Shaders {
         vertex,
         fragment

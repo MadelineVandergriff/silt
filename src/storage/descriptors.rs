@@ -1,9 +1,9 @@
 use crate::{pipeline::Shader, prelude::*};
 
-use std::collections::HashMap;
 use anyhow::Result;
 use impl_trait_for_tuples::impl_for_tuples;
-use itertools::{Itertools, izip};
+use itertools::{izip, Itertools};
+use std::collections::HashMap;
 
 pub trait BindableVec {
     fn bindings(&self) -> Vec<BindingDescription>;
@@ -14,14 +14,15 @@ pub trait Bindable: Copy + Default {
     fn pool_size(&self) -> vk::DescriptorPoolSize {
         vk::DescriptorPoolSize::builder()
             .descriptor_count(self.binding().descriptor_count)
-            .ty(self.binding().descriptor_type)
+            .ty(self.binding().ty)
             .build()
     }
 }
 
 #[derive(Clone, Copy, Debug)]
 pub enum ResourceType {
-    Image, Buffer
+    Image,
+    Buffer,
 }
 
 pub trait DescriptorWriter {
@@ -36,21 +37,27 @@ pub struct DescriptorWrite<'a> {
 }
 
 impl<'a> DescriptorWrite<'a> {
-    pub fn from_buffer(buffer_info: ParitySet<vk::DescriptorBufferInfoBuilder<'a>>, binding: BindingDescription) -> Self {
+    pub fn from_buffer(
+        buffer_info: ParitySet<vk::DescriptorBufferInfoBuilder<'a>>,
+        binding: BindingDescription,
+    ) -> Self {
         Self {
             resource_ty: ResourceType::Buffer,
             buffer_info,
             image_info: ParitySet::from_fn(|| vk::DescriptorImageInfo::builder()),
-            binding
+            binding,
         }
     }
 
-    pub fn from_image(image_info: ParitySet<vk::DescriptorImageInfoBuilder<'a>>, binding: BindingDescription) -> Self {
+    pub fn from_image(
+        image_info: ParitySet<vk::DescriptorImageInfoBuilder<'a>>,
+        binding: BindingDescription,
+    ) -> Self {
         Self {
             resource_ty: ResourceType::Buffer,
             buffer_info: ParitySet::from_fn(|| vk::DescriptorBufferInfo::builder()),
             image_info,
-            binding
+            binding,
         }
     }
 
@@ -60,19 +67,23 @@ impl<'a> DescriptorWrite<'a> {
                 &izip!(self.buffer_info.iter(), self.image_info.iter(), sets.iter())
                     .map(|(buffer_info, image_info, set)| {
                         let mut write = vk::WriteDescriptorSet::builder()
-                            .descriptor_type(self.binding.descriptor_type)
+                            .descriptor_type(self.binding.ty)
                             .dst_binding(self.binding.binding)
                             .dst_set(*set);
 
                         match self.resource_ty {
-                            ResourceType::Image => write = write.image_info(std::slice::from_ref(image_info)),
-                            ResourceType::Buffer => write = write.buffer_info(std::slice::from_ref(buffer_info)),
+                            ResourceType::Image => {
+                                write = write.image_info(std::slice::from_ref(image_info))
+                            }
+                            ResourceType::Buffer => {
+                                write = write.buffer_info(std::slice::from_ref(buffer_info))
+                            }
                         }
 
                         write.build()
                     })
-                    .collect_vec(), 
-                &[]
+                    .collect_vec(),
+                &[],
             );
         }
     }
@@ -124,11 +135,23 @@ pub enum DescriptorFrequency {
 
 #[derive(PartialEq, Clone, Copy, Debug)]
 pub struct BindingDescription {
-    pub descriptor_type: vk::DescriptorType,
+    pub ty: vk::DescriptorType,
     pub frequency: DescriptorFrequency,
     pub binding: u32,
     pub descriptor_count: u32,
     pub stage_flags: vk::ShaderStageFlags,
+}
+
+impl Default for BindingDescription {
+    fn default() -> Self {
+        Self {
+            ty: vk::DescriptorType::default(),
+            frequency: DescriptorFrequency::Global,
+            binding: 0,
+            descriptor_count: 1,
+            stage_flags: vk::ShaderStageFlags::empty(),
+        }
+    }
 }
 
 pub fn get_layouts(loader: &Loader, shaders: &[&dyn Shader]) -> Result<Layouts> {
@@ -141,8 +164,7 @@ pub fn get_layouts(loader: &Loader, shaders: &[&dyn Shader]) -> Result<Layouts> 
             |mut acc, _, binding| {
                 if let Some(old) = acc.get_mut(&binding.binding) {
                     assert!(
-                        old.descriptor_type == binding.descriptor_type
-                            && old.descriptor_count == binding.descriptor_count
+                        old.ty == binding.ty && old.descriptor_count == binding.descriptor_count
                     );
                     old.stage_flags |= binding.stage_flags;
                 } else {
@@ -160,7 +182,7 @@ pub fn get_layouts(loader: &Loader, shaders: &[&dyn Shader]) -> Result<Layouts> 
                     vk::DescriptorSetLayoutBinding::builder()
                         .descriptor_count(binding.descriptor_count)
                         .stage_flags(binding.stage_flags)
-                        .descriptor_type(binding.descriptor_type)
+                        .descriptor_type(binding.ty)
                         .binding(binding.binding)
                         .build()
                 })
@@ -202,7 +224,7 @@ pub unsafe fn get_descriptors<'a>(
         .map(|write| {
             let binding = write.binding;
             vk::DescriptorPoolSize {
-                ty: binding.descriptor_type,
+                ty: binding.ty,
                 descriptor_count: binding.descriptor_count,
             }
         })

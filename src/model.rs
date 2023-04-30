@@ -57,7 +57,7 @@ pub struct MVP {
 impl Bindable for MVP {
     fn binding(&self) -> BindingDescription {
         BindingDescription {
-            descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
+            ty: vk::DescriptorType::UNIFORM_BUFFER,
             frequency: DescriptorFrequency::Global,
             binding: 0,
             descriptor_count: 1,

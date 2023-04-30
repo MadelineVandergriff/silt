@@ -107,3 +107,22 @@ impl Into<ShaderOptions> for () {
         ShaderOptions::empty()
     }
 }
+
+#[macro_export]
+macro_rules! bindable {
+    ($name: ident, $ty: expr, $frequency: expr, $binding: expr) => {
+        #[derive(Default, Copy, Clone)]
+        pub struct $name();
+
+        impl $crate::storage::descriptors::Bindable for $name {
+            fn binding(&self) -> BindingDescription {
+                BindingDescription {
+                    ty: $ty,
+                    frequency: $frequency,
+                    binding: $binding,
+                    ..Default::default()
+                }
+            }
+        }
+    };
+}
