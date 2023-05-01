@@ -168,7 +168,7 @@ impl<T> From<Vec<T>> for ParitySet<T> {
     fn from(mut value: Vec<T>) -> Self {
         Self {
             even: value.remove(0),
-            odd: value.remove(1)
+            odd: value.remove(0)
         }
     }
 }

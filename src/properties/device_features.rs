@@ -18,6 +18,7 @@ pub struct DeviceFeaturesRequest {
     pub prefered: DeviceFeatures,
 }
 
+#[derive(Debug, Clone, Copy)]
 pub struct ProvidedFeatures {
     pub features: DeviceFeatures,
     pub pdevice: vk::PhysicalDevice,
@@ -30,6 +31,17 @@ impl ProvidedFeatures {
              Some(self.limits.max_sampler_anisotropy)
         } else {
             None
+        }
+    }
+
+    pub fn new(loader: &Loader, pdevice: vk::PhysicalDevice) -> Self {
+        let features: DeviceFeatures = unsafe { loader.instance.get_physical_device_features(pdevice).into() };
+        let limits = unsafe { loader.instance.get_physical_device_properties(pdevice).limits };
+
+        Self {
+            features,
+            pdevice,
+            limits
         }
     }
 }

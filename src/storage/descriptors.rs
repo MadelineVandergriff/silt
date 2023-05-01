@@ -54,7 +54,7 @@ impl<'a> DescriptorWrite<'a> {
         binding: BindingDescription,
     ) -> Self {
         Self {
-            resource_ty: ResourceType::Buffer,
+            resource_ty: ResourceType::Image,
             buffer_info: ParitySet::from_fn(|| vk::DescriptorBufferInfo::builder()),
             image_info,
             binding,
@@ -79,7 +79,7 @@ impl<'a> DescriptorWrite<'a> {
                                 write = write.buffer_info(std::slice::from_ref(buffer_info))
                             }
                         }
-
+                        
                         write.build()
                     })
                     .collect_vec(),
@@ -225,7 +225,7 @@ pub unsafe fn get_descriptors<'a>(
             let binding = write.binding;
             vk::DescriptorPoolSize {
                 ty: binding.ty,
-                descriptor_count: binding.descriptor_count,
+                descriptor_count: binding.descriptor_count * 2,
             }
         })
         .collect_vec();

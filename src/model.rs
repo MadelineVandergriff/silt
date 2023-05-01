@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use anyhow::Result;
 use memoffset::offset_of;
 
@@ -103,6 +105,28 @@ impl Model {
         Ok(Self {
             vertices, indices, mvp
         })
+    }
+
+    pub fn load(loader: &Loader, pool: &CommandPool, path: PathBuf) -> Result<Self> {
+        let (models, _) =
+            tobj::load_obj(path, &tobj::GPU_LOAD_OPTIONS)?;
+        let mesh = &models[0].mesh;
+    
+        let vertices = std::iter::zip(
+            mesh.positions.chunks_exact(3),
+            mesh.texcoords.chunks_exact(2),
+        )
+        .map(|(pos, uv)| Vertex {
+            pos: glam::vec3(pos[0], pos[1], pos[2]),
+            color: glam::Vec3::ZERO,
+            tex_coord: glam::vec2(uv[0], 1. - uv[1]),
+        })
+        .collect::<Vec<_>>();
+    
+        println!("Vertex count: [{}]", vertices.len());
+        println!("Index count: [{}]", mesh.indices.len());
+    
+        Self::create(loader, pool, &vertices, &mesh.indices)
     }
 }
 

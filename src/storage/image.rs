@@ -401,7 +401,7 @@ pub unsafe fn generate_mipmaps(loader: &Loader, pool: &CommandPool, image: &Imag
     }).unwrap();
 }
 
-pub unsafe fn upload_texture(loader: &Loader, pool: &CommandPool, file: ImageFile) -> Result<Image> {
+pub unsafe fn upload_texture<T: Default + Bindable>(loader: &Loader, features: ProvidedFeatures, pool: &CommandPool, file: ImageFile) -> Result<SampledImage> {
     let buffer_ci = BufferCreateInfo {
         size: file.size,
         name: None,
@@ -428,7 +428,7 @@ pub unsafe fn upload_texture(loader: &Loader, pool: &CommandPool, file: ImageFil
     generate_mipmaps(loader, pool, &image);
     src_buffer.destroy(loader);
 
-    Ok(image)
+    get_sampler(loader, features, image, T::default().binding())
 }
 
 pub fn get_sampler(loader: &Loader, features: ProvidedFeatures, image: Image, binding: BindingDescription) -> Result<SampledImage> {

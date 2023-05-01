@@ -6,7 +6,6 @@ use crate::storage::image;
 pub unsafe fn get_present_pass(loader: &Loader, pdevice: vk::PhysicalDevice, surface: vk::SurfaceKHR) -> vk::RenderPass {
     let surface_format = image::get_surface_format(loader, surface, pdevice);
     let msaa_samples = get_sample_counts(loader, pdevice);
-    println!("Samples: [{:?}]", msaa_samples);
 
     let color_attachment = vk::AttachmentDescription::builder()
         .format(surface_format.format)

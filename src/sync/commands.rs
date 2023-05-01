@@ -77,4 +77,22 @@ impl CommandPool {
 
         Ok(ret)
     }
+
+    pub fn get_main_command_buffers(
+        &self,
+        loader: &Loader,
+    ) -> Result<ParitySet<vk::CommandBuffer>> {
+        let buffer_ci = vk::CommandBufferAllocateInfo::builder()
+            .command_pool(self.pool)
+            .command_buffer_count(2)
+            .level(vk::CommandBufferLevel::PRIMARY);
+
+        unsafe {
+            Ok(loader
+                .device
+                .allocate_command_buffers(&buffer_ci)?
+                .into_iter()
+                .collect())
+        }
+    }
 }
