@@ -69,33 +69,35 @@ impl Bindable for MVP {
 }
 
 pub struct Model {
-    pub vertices: Buffer,
-    pub indices: Buffer,
+    pub vertex_buffer: Buffer,
+    pub index_buffer: Buffer,
+    pub vertices: Vec<Vertex>,
+    pub indices: Vec<u32>,
     pub mvp: BoundBuffer<MVP>
 }
 
 impl Destructible for Model {
     fn destroy(self, loader: &Loader) {
-        self.vertices.destroy(loader);
-        self.indices.destroy(loader);
+        self.vertex_buffer.destroy(loader);
+        self.index_buffer.destroy(loader);
         self.mvp.destroy(loader);
     }
 }
 
 impl Model {
-    pub fn create(loader: &Loader, pool: &CommandPool, vertices: &[Vertex], indices: &[u32]) -> Result<Self> {
-        let vertices = buffer::upload_to_gpu(
+    pub fn create(loader: &Loader, pool: &CommandPool, vertices: Vec<Vertex>, indices: Vec<u32>) -> Result<Self> {
+        let vertex_buffer = buffer::upload_to_gpu(
             loader,
             pool,
-            vertices,
+            &vertices,
             vk::BufferUsageFlags::VERTEX_BUFFER,
             Some("Vertex Buffer"),
         )?;
 
-        let indices = buffer::upload_to_gpu(
+        let index_buffer = buffer::upload_to_gpu(
             loader,
             pool,
-            indices,
+            &indices,
             vk::BufferUsageFlags::VERTEX_BUFFER,
             Some("Index Buffer"),
         )?;
@@ -103,7 +105,7 @@ impl Model {
         let mvp = get_bound_buffer(loader, vk::BufferUsageFlags::UNIFORM_BUFFER)?;
 
         Ok(Self {
-            vertices, indices, mvp
+            vertex_buffer, index_buffer, vertices, indices, mvp
         })
     }
 
@@ -126,7 +128,7 @@ impl Model {
         println!("Vertex count: [{}]", vertices.len());
         println!("Index count: [{}]", mesh.indices.len());
     
-        Self::create(loader, pool, &vertices, &mesh.indices)
+        Self::create(loader, pool, vertices, mesh.indices.clone())
     }
 }
 

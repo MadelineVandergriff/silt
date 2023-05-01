@@ -7,7 +7,7 @@ use itertools::Itertools;
 
 use super::{buffer::*, descriptors::{DescriptorWriter, DescriptorWrite, BindingDescription, Bindable}};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Image {
     pub image: vk::Image,
     pub view: vk::ImageView,

@@ -13,7 +13,7 @@ pub struct SwapFrame {
     pub framebuffer: vk::Framebuffer,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Swapchain {
     pub swapchain: vk::SwapchainKHR,
     pub extent: vk::Extent2D,
