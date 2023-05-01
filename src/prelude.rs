@@ -158,6 +158,15 @@ pub enum Parity {
     Even, Odd
 }
 
+impl Parity {
+    pub fn swap(&mut self) {
+        *self = match self {
+            Parity::Even => Parity::Odd,
+            Parity::Odd => Parity::Even,
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct ParitySet<T> {
     pub even: T,

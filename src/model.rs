@@ -1,3 +1,4 @@
+use std::f32::consts::FRAC_PI_2;
 use std::path::PathBuf;
 
 use anyhow::Result;
@@ -5,7 +6,7 @@ use memoffset::offset_of;
 
 use crate::pipeline::BindableVertex;
 use crate::prelude::*;
-use crate::storage::buffer::{self, Buffer, BoundBuffer, get_bound_buffer};
+use crate::storage::buffer::{self, get_bound_buffer, BoundBuffer, Buffer};
 use crate::storage::descriptors::{Bindable, BindingDescription, DescriptorFrequency};
 use crate::sync::CommandPool;
 
@@ -49,11 +50,25 @@ impl BindableVertex for Vertex {
     }
 }
 
-#[derive(Clone, Copy, Default, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct MVP {
     pub model: glam::Mat4,
     pub view: glam::Mat4,
     pub projection: glam::Mat4,
+}
+
+impl Default for MVP {
+    fn default() -> Self {
+        Self {
+            model: glam::Mat4::from_rotation_z(0 as f32),
+            view: glam::Mat4::look_at_rh (
+                glam::vec3(1.5, 1.5, 1.5),
+                glam::vec3(0., 0., 0.),
+                glam::vec3(0., 0., -1.),
+            ),
+            projection: glam::Mat4::perspective_rh(FRAC_PI_2, 16. / 9., 0.1, 100.),
+        }
+    }
 }
 
 impl Bindable for MVP {
@@ -73,7 +88,7 @@ pub struct Model {
     pub index_buffer: Buffer,
     pub vertices: Vec<Vertex>,
     pub indices: Vec<u32>,
-    pub mvp: BoundBuffer<MVP>
+    pub mvp: BoundBuffer<MVP>,
 }
 
 impl Destructible for Model {
@@ -85,7 +100,12 @@ impl Destructible for Model {
 }
 
 impl Model {
-    pub fn create(loader: &Loader, pool: &CommandPool, vertices: Vec<Vertex>, indices: Vec<u32>) -> Result<Self> {
+    pub fn create(
+        loader: &Loader,
+        pool: &CommandPool,
+        vertices: Vec<Vertex>,
+        indices: Vec<u32>,
+    ) -> Result<Self> {
         let vertex_buffer = buffer::upload_to_gpu(
             loader,
             pool,
@@ -98,22 +118,25 @@ impl Model {
             loader,
             pool,
             &indices,
-            vk::BufferUsageFlags::VERTEX_BUFFER,
+            vk::BufferUsageFlags::INDEX_BUFFER,
             Some("Index Buffer"),
         )?;
 
         let mvp = get_bound_buffer(loader, vk::BufferUsageFlags::UNIFORM_BUFFER)?;
 
         Ok(Self {
-            vertex_buffer, index_buffer, vertices, indices, mvp
+            vertex_buffer,
+            index_buffer,
+            vertices,
+            indices,
+            mvp,
         })
     }
 
     pub fn load(loader: &Loader, pool: &CommandPool, path: PathBuf) -> Result<Self> {
-        let (models, _) =
-            tobj::load_obj(path, &tobj::GPU_LOAD_OPTIONS)?;
+        let (models, _) = tobj::load_obj(path, &tobj::GPU_LOAD_OPTIONS)?;
         let mesh = &models[0].mesh;
-    
+
         let vertices = std::iter::zip(
             mesh.positions.chunks_exact(3),
             mesh.texcoords.chunks_exact(2),
@@ -124,11 +147,10 @@ impl Model {
             tex_coord: glam::vec2(uv[0], 1. - uv[1]),
         })
         .collect::<Vec<_>>();
-    
+
         println!("Vertex count: [{}]", vertices.len());
         println!("Index count: [{}]", mesh.indices.len());
-    
+
         Self::create(loader, pool, vertices, mesh.indices.clone())
     }
 }
-
