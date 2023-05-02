@@ -13,7 +13,7 @@ use silt::storage::descriptors::{
 };
 use silt::storage::image::{upload_texture, ImageFile, SampledImage};
 use silt::sync::{
-    get_command_pools, get_sync_primitives, QueueHandle, QueueRequest, QueueType, SyncPrimitives,
+    get_command_pools, get_sync_primitives, QueueHandle, QueueRequest, QueueType, SyncPrimitives, Recordable,
 };
 use silt::{bindable, shader};
 use silt::{loader::*, swapchain::Swapchain};
@@ -203,19 +203,6 @@ fn record_command_buffer(
             .device
             .cmd_bind_pipeline(command_buffer, vk::PipelineBindPoint::GRAPHICS, pipeline);
 
-        loader.device.cmd_bind_vertex_buffers(
-            command_buffer,
-            0,
-            &[model.vertex_buffer.buffer],
-            &[0],
-        );
-        loader.device.cmd_bind_index_buffer(
-            command_buffer,
-            model.index_buffer.buffer,
-            0,
-            vk::IndexType::UINT32,
-        );
-
         let viewport = vk::Viewport {
             x: 0.,
             y: 0.,
@@ -245,9 +232,7 @@ fn record_command_buffer(
             &[],
         );
 
-        loader
-            .device
-            .cmd_draw_indexed(command_buffer, model.indices.len() as u32, 1, 0, 0, 0);
+        model.record(loader, command_buffer);
         loader.device.cmd_end_render_pass(command_buffer);
         loader.device.end_command_buffer(command_buffer).unwrap();
     }

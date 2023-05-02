@@ -1,15 +1,9 @@
-use anyhow::Result;
 use std::ffi::CStr;
 
-use crate::properties::{get_sample_counts};
-use crate::storage::descriptors::Layouts;
-use crate::{loader::Loader, prelude::*};
+use crate::{prelude::*, storage::descriptors::Layouts, properties::get_sample_counts};
 
-mod render_pass;
-pub use render_pass::*;
-
-mod shader;
-pub use shader::*;
+use super::{Shaders, Shader};
+use anyhow::Result;
 
 pub unsafe fn get_pipeline(
     loader: &Loader,

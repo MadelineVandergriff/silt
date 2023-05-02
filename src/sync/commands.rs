@@ -96,3 +96,7 @@ impl CommandPool {
         }
     }
 }
+
+pub trait Recordable {
+    fn record(&self, loader: &Loader, command_buffer: vk::CommandBuffer);
+}

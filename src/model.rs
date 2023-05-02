@@ -8,7 +8,7 @@ use crate::pipeline::BindableVertex;
 use crate::prelude::*;
 use crate::storage::buffer::{self, get_bound_buffer, BoundBuffer, Buffer};
 use crate::storage::descriptors::{Bindable, BindingDescription, DescriptorFrequency};
-use crate::sync::CommandPool;
+use crate::sync::{CommandPool, Recordable};
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Vertex {
@@ -152,5 +152,26 @@ impl Model {
         println!("Index count: [{}]", mesh.indices.len());
 
         Self::create(loader, pool, vertices, mesh.indices.clone())
+    }
+}
+
+impl Recordable for Model {
+    fn record(&self, loader: &Loader, cmd: vk::CommandBuffer) {
+        unsafe { loader.device.cmd_bind_vertex_buffers(
+            cmd,
+            0,
+            &[self.vertex_buffer.buffer],
+            &[0],
+        );
+        loader.device.cmd_bind_index_buffer(
+            cmd,
+            self.index_buffer.buffer,
+            0,
+            vk::IndexType::UINT32,
+        );
+        loader
+            .device
+            .cmd_draw_indexed(cmd, self.indices.len() as u32, 1, 0, 0, 0);
+        }
     }
 }
