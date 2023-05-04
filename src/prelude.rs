@@ -128,6 +128,14 @@ pub struct Context {
 }
 
 impl Context {
+    fn runner<S>(event: Event<'_, ()>, target: &EventLoopWindowTarget<()>, control_flow: &mut ControlFlow, mut draw: impl FnMut(&mut S), state: &mut S) {
+        *control_flow = ControlFlow::Poll;
+        match event {
+            Event::RedrawEventsCleared => draw(state),
+            _ => {}
+        }
+    }
+
     pub fn new() -> Self {
         Self {
             inner: RefCell::new(Some(EventLoop::new())),
