@@ -1,13 +1,13 @@
 use std::{cell::RefCell, collections::HashMap};
 
-use crate::{prelude::*, storage::descriptors::{Layouts, DescriptorFrequency}, model::Model};
+use crate::{prelude::*, storage::descriptors::{Layouts, DescriptorFrequency}};
 
-pub struct RenderContext<'a> {
-    pub loader: &'a Loader,
+pub struct RenderContext {
+    pub loader: Loader,
     pub parity: Parity,
     pub frame: usize,
     pub command_buffers: ParitySet<vk::CommandBuffer>,
-    pub swapchain: &'a RefCell<Swapchain>,
+    pub swapchain: RefCell<Swapchain>,
     pub present_pass: vk::RenderPass,
     pub pipeline: vk::Pipeline,
     pub layouts: Layouts,

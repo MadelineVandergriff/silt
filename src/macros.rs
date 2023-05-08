@@ -1,25 +1,13 @@
 use anyhow::{anyhow, Result};
 use ash::util::read_spv;
-use bitflags::bitflags;
 use once_cell::sync::Lazy;
-use shaderc::{Compiler, CompileOptions};
-pub use shaderc::ShaderKind;
+use shaderc::{CompileOptions, Compiler};
 use std::fs;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
-use std::slice::SliceIndex;
-use derive_more::Into;
 
-#[derive(Into)]
-pub struct ShaderCode(Vec<u32>);
-
-impl<R: SliceIndex<[u32]>> std::ops::Index<R> for ShaderCode {
-    type Output = <R as SliceIndex<[u32]>>::Output;
-
-    fn index(&self, index: R) -> &Self::Output {
-        &self.0[index]
-    }
-}
+use crate::material::{ShaderCode, ShaderOptions};
+use crate::prelude::shader_kind_to_shader_stage_flags;
 
 static SHADERC_COMPILER: Lazy<Compiler> = Lazy::new(|| Compiler::new().unwrap());
 
@@ -44,14 +32,16 @@ pub fn __get_shader_code(
     options: ShaderOptions,
     invocation_path: PathBuf,
 ) -> Result<ShaderCode> {
-    let cache_enabled = options.contains(ShaderOptions::CACHE) && cfg!(target_os = "linux");
-    let compile_options = if options.contains(ShaderOptions::HLSL) {
+    let cache_enabled = options.to_vec_ref().contains(&&ShaderOptions::Cache) && cfg!(target_os = "linux");
+    let compile_options = if options.to_vec_ref().contains(&&ShaderOptions::HLSL) {
         let mut options = CompileOptions::new().unwrap();
         options.set_source_language(shaderc::SourceLanguage::HLSL);
         Some(options)
     } else {
         None
     };
+
+    let kind = get_kind(path).ok_or(anyhow!("failed to determine shader type"))?;
 
     let flat_path = String::from(path).replace("/", "_");
     let spirv_path = String::from("/tmp/silt_") + &flat_path + ".spirv";
@@ -64,16 +54,18 @@ pub fn __get_shader_code(
         match (spirv_file, copy_text) {
             (Ok(ref mut spirv_file), Ok(copy_text)) if copy_text == text => {
                 let code = read_spv(spirv_file)?;
-                return Ok(ShaderCode(code));
+                return Ok(ShaderCode {
+                    code,
+                    kind: shader_kind_to_shader_stage_flags(kind),
+                    layout: vec![],
+                });
             }
             _ => (),
         }
     }
 
-    let shader_kind = get_kind(path).ok_or(anyhow!("failed to determine shader type"))?;
-    let spirv = SHADERC_COMPILER
-        .compile_into_spirv(text, shader_kind, path, "main", compile_options.as_ref())
-        ?;
+    let spirv =
+        SHADERC_COMPILER.compile_into_spirv(text, kind, path, "main", compile_options.as_ref())?;
     let code = read_spv(&mut Cursor::new(spirv.as_binary_u8()))?;
 
     if cache_enabled {
@@ -81,7 +73,11 @@ pub fn __get_shader_code(
         fs::copy(invocation_path.join(path), copy_path)?;
     }
 
-    Ok(ShaderCode(code))
+    Ok(ShaderCode {
+        code,
+        kind: shader_kind_to_shader_stage_flags(kind),
+        layout: vec![]
+    })
 }
 
 fn get_kind(path: &str) -> Option<shaderc::ShaderKind> {
@@ -91,20 +87,6 @@ fn get_kind(path: &str) -> Option<shaderc::ShaderKind> {
         "frag" => Some(shaderc::ShaderKind::Fragment),
         "comp" => Some(shaderc::ShaderKind::Compute),
         _ => None,
-    }
-}
-
-bitflags! {
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-    pub struct ShaderOptions: u32 {
-        const CACHE = 0b00000001;
-        const HLSL  = 0b00000010;
-    }
-}
-
-impl Into<ShaderOptions> for () {
-    fn into(self) -> ShaderOptions {
-        ShaderOptions::empty()
     }
 }
 

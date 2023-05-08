@@ -258,3 +258,9 @@ pub unsafe fn get_descriptors<'a>(
 
     Ok((pool, sets))
 }
+
+pub struct ShaderBinding {
+    pub ty: vk::DescriptorType,
+    pub frequency: DescriptorFrequency,
+    pub binding: u32,
+}

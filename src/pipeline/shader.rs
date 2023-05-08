@@ -1,5 +1,4 @@
-pub use crate::macros::ShaderCode;
-
+use crate::material::ShaderCode;
 use crate::storage::descriptors::{BindableVec, BindingDescription};
 use crate::{loader::Loader, prelude::*};
 use anyhow::Result;
@@ -23,7 +22,7 @@ impl VertexShader {
         V: BindableVertex + Default + 'static,
         B: BindableVec + Default + 'static,
     {
-        let shader_ci = vk::ShaderModuleCreateInfo::builder().code(&code[..]);
+        let shader_ci = vk::ShaderModuleCreateInfo::builder().code(&code.code);
 
         Ok(Self {
             shader: unsafe { loader.device.create_shader_module(&shader_ci, None)? },
@@ -76,7 +75,7 @@ impl FragmentShader {
     where
         B: BindableVec + Default + 'static,
     {
-        let shader_ci = vk::ShaderModuleCreateInfo::builder().code(&code[..]);
+        let shader_ci = vk::ShaderModuleCreateInfo::builder().code(&code.code);
 
         Ok(Self {
             shader: unsafe { loader.device.create_shader_module(&shader_ci, None)? },
