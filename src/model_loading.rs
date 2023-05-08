@@ -1033,7 +1033,7 @@ unsafe fn get_image_views(
 }
 
 unsafe fn get_shader_module(device: &Device, name: impl AsRef<str>) -> vk::ShaderModule {
-    let code: Vec<u32> = shader!(name.as_ref(), ShaderOptions::Cache | ShaderOptions::HLSL).unwrap().code;
+    let code: Vec<u32> = shader!(name.as_ref(), vec![], ShaderOptions::Cache | ShaderOptions::HLSL).unwrap().code;
     let shader_module_create_info = vk::ShaderModuleCreateInfo::builder().code(&code[..]);
 
     device

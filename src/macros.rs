@@ -8,18 +8,19 @@ use std::path::{Path, PathBuf};
 
 use crate::material::{ShaderCode, ShaderOptions};
 use crate::prelude::shader_kind_to_shader_stage_flags;
+use crate::storage::descriptors::ShaderBinding;
 
 static SHADERC_COMPILER: Lazy<Compiler> = Lazy::new(|| Compiler::new().unwrap());
 
 #[macro_export]
 macro_rules! shader {
-    ($path: literal $(, $options: expr)?) => {
-        $crate::macros::__get_shader_code($path, include_str!($path), ($($options)?).into(), std::path::Path::new(file!()).parent().unwrap().into())
+    ($path: literal, $layout: expr $(, $options: expr)?) => {
+        $crate::macros::__get_shader_code($path, include_str!($path), $layout, ($($options)?).into(), std::path::Path::new(file!()).parent().unwrap().into())
     };
-    ($path: expr $(, $options: expr)?) => {
+    ($path: expr, $layout: expr $(, $options: expr)?) => {
         match std::fs::read($path) {
             Ok(text) => {
-                $crate::macros::__get_shader_code($path, std::str::from_utf8(&text).unwrap(), ($($options)?).into(), std::env::current_dir().unwrap())
+                $crate::macros::__get_shader_code($path, std::str::from_utf8(&text).unwrap(), $layout, ($($options)?).into(), std::env::current_dir().unwrap())
             },
             _ => Err(anyhow::anyhow!("failed to read shader code"))
         }
@@ -29,11 +30,14 @@ macro_rules! shader {
 pub fn __get_shader_code(
     path: &str,
     text: &str,
+    layout: impl Into<Vec<ShaderBinding>>,
     options: ShaderOptions,
     invocation_path: PathBuf,
 ) -> Result<ShaderCode> {
-    let cache_enabled = options.to_vec_ref().contains(&&ShaderOptions::Cache) && cfg!(target_os = "linux");
-    let compile_options = if options.to_vec_ref().contains(&&ShaderOptions::HLSL) {
+    let options = options.to_vec();
+
+    let cache_enabled = options.contains(&ShaderOptions::Cache) && cfg!(target_os = "linux");
+    let compile_options = if options.contains(&ShaderOptions::HLSL) {
         let mut options = CompileOptions::new().unwrap();
         options.set_source_language(shaderc::SourceLanguage::HLSL);
         Some(options)
@@ -57,7 +61,7 @@ pub fn __get_shader_code(
                 return Ok(ShaderCode {
                     code,
                     kind: shader_kind_to_shader_stage_flags(kind),
-                    layout: vec![],
+                    layout: layout.into(),
                 });
             }
             _ => (),
@@ -76,7 +80,7 @@ pub fn __get_shader_code(
     Ok(ShaderCode {
         code,
         kind: shader_kind_to_shader_stage_flags(kind),
-        layout: vec![]
+        layout: layout.into()
     })
 }
 

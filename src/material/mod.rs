@@ -1,4 +1,5 @@
-use crate::{prelude::*, storage::descriptors::{ShaderBinding, Layouts}};
+use crate::{prelude::*, storage::descriptors::{ShaderBinding, Layouts, build_layout}};
+use anyhow::Result;
 
 #[derive(Debug, Clone)]
 pub enum ShaderOptions {
@@ -82,5 +83,12 @@ pub struct ShaderEffect {
 }
 
 impl ShaderEffect {
+    pub fn new(loader: &Loader, modules: impl Into<Vec<ShaderCode>>) -> Result<Self> {
+        let modules: Vec<_> = modules.into();
 
+        Ok(Self {
+            layouts: build_layout(loader, &modules)?,
+            modules,
+        })
+    }
 }

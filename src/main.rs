@@ -2,7 +2,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 
 use itertools::Itertools;
-use silt::macros::ShaderOptions;
+use silt::material::ShaderOptions;
 use silt::model::{Model, Vertex, MVP};
 use silt::pipeline::{FragmentShader, Shaders, VertexShader};
 use silt::prelude::*;
@@ -67,11 +67,11 @@ fn main() -> Result<()> {
     };
     let vertex = VertexShader::new::<Vertex, MVP>(
         &loader,
-        shader!("../assets/shaders/model_loading.vert", ShaderOptions::HLSL)?,
+        shader!("../assets/shaders/model_loading.vert", vec![], ShaderOptions::HLSL)?,
     )?;
     let fragment = FragmentShader::new::<Texture>(
         &loader,
-        shader!("../assets/shaders/model_loading.frag", ShaderOptions::HLSL)?,
+        shader!("../assets/shaders/model_loading.frag", vec![], ShaderOptions::HLSL)?,
     )?;
     let shaders = Shaders { vertex, fragment };
     let layouts = descriptors::get_layouts(&loader, &[&shaders.vertex, &shaders.fragment])?;

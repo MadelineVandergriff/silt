@@ -1,6 +1,6 @@
-use crate::{pipeline::Shader, prelude::*};
+use crate::{material::ShaderCode, pipeline::Shader, prelude::*};
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use impl_trait_for_tuples::impl_for_tuples;
 use itertools::{izip, Itertools};
 use std::collections::HashMap;
@@ -79,7 +79,7 @@ impl<'a> DescriptorWrite<'a> {
                                 write = write.buffer_info(std::slice::from_ref(buffer_info))
                             }
                         }
-                        
+
                         write.build()
                     })
                     .collect_vec(),
@@ -125,8 +125,9 @@ impl Destructible for Layouts {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 pub enum DescriptorFrequency {
+    #[default]
     Global,
     Pass,
     Material,
@@ -259,8 +260,73 @@ pub unsafe fn get_descriptors<'a>(
     Ok((pool, sets))
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct ShaderBinding {
     pub ty: vk::DescriptorType,
     pub frequency: DescriptorFrequency,
     pub binding: u32,
+    pub count: u32,
+}
+
+pub fn build_layout<'a, S: 'a>(loader: &Loader, shaders: S) -> Result<Layouts>
+where
+    S: IntoIterator<Item = &'a ShaderCode>,
+{
+    let descriptors = shaders
+        .into_iter()
+        .flat_map(|shader| std::iter::zip([shader.kind].into_iter().cycle(), shader.layout.clone()))
+        .group_by(|(_, binding)| (binding.binding, binding.frequency))
+        .into_iter()
+        .map(|(_, group)| {
+            let reduced = group
+                .reduce(|(acc_flags, acc_binding), (flags, binding)| {
+                    if acc_binding == binding {
+                        (acc_flags | flags, acc_binding)
+                    } else {
+                        Default::default()
+                    }
+                })
+                .unwrap();
+
+            if reduced == Default::default() {
+                Err(anyhow!("Failed to accumulate bindings"))
+            } else {
+                Ok(reduced)
+            }
+        })
+        .collect::<Result<Vec<_>>>()?
+        .into_iter()
+        .group_by(|(_, binding)| binding.frequency)
+        .into_iter()
+        .map(|(frequency, group)| {
+            let bindings = group
+                .map(|(flags, binding)| {
+                    vk::DescriptorSetLayoutBinding::builder()
+                        .binding(binding.binding)
+                        .descriptor_count(binding.count)
+                        .descriptor_type(binding.ty)
+                        .stage_flags(flags)
+                        .build()
+                })
+                .collect_vec();
+
+            let layout_ci = vk::DescriptorSetLayoutCreateInfo::builder().bindings(&bindings);
+            let layout = unsafe { loader.device.create_descriptor_set_layout(&layout_ci, None) };
+            layout.map(|layout| (frequency, layout))
+        })
+        .collect::<std::result::Result<HashMap<_, _>, _>>()?;
+
+    let set_layouts_flat = descriptors.values().map(|&l| l).collect_vec();
+    let pipeline_layout_ci = vk::PipelineLayoutCreateInfo::builder().set_layouts(&set_layouts_flat);
+
+    let pipeline = unsafe {
+        loader
+            .device
+            .create_pipeline_layout(&pipeline_layout_ci, None)?
+    };
+
+    Ok(Layouts {
+        descriptors,
+        pipeline,
+    })
 }

@@ -16,6 +16,7 @@ use std::{
     ffi::c_void,
     num::NonZeroU64,
     ptr::NonNull,
+    convert::From
 };
 use uuid::Uuid;
 use winit::{
@@ -392,3 +393,39 @@ impl Destructible for vk::SwapchainKHR {
         unsafe { loader.swapchain.destroy_swapchain(self, None) };
     }
 }
+
+pub trait Vectorizable<T> {
+    fn to_vec(self) -> Vec<T>;
+}
+
+impl<T> Vectorizable<T> for T {
+    fn to_vec(self) -> Vec<T> {
+        vec![self]
+    }
+}
+
+impl<T> Vectorizable<T> for Vec<T> {
+    fn to_vec(self) -> Vec<T> {
+        self
+    }
+}
+
+impl<T: Clone> Vectorizable<T> for &[T] {
+    fn to_vec(self) -> Vec<T> {
+        Vec::from(self)
+    }
+}
+
+macro_rules! impl_vectorizable_for_array {
+    ($( $size:literal ),*) => {
+        $(
+        impl<T> Vectorizable<T> for [T; $size] {
+            fn to_vec(self) -> Vec<T> {
+                self.into()
+            }
+        }
+        )*
+    };
+}
+
+impl_vectorizable_for_array!(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16);
