@@ -5,7 +5,7 @@ use crate::{prelude::*, storage::descriptors::Layouts, properties::get_sample_co
 use super::{Shaders, Shader};
 use anyhow::Result;
 
-pub unsafe fn get_pipeline(
+pub unsafe fn get_present_pipeline(
     loader: &Loader,
     pdevice: vk::PhysicalDevice,
     render_pass: vk::RenderPass,
@@ -55,7 +55,7 @@ pub unsafe fn get_pipeline(
         .depth_bias_enable(false);
 
     let multisample_state = vk::PipelineMultisampleStateCreateInfo::builder()
-        .sample_shading_enable(false)
+        .sample_shading_enable(true)
         .rasterization_samples(msaa_samples);
 
     let color_blend_attachment_state = vk::PipelineColorBlendAttachmentState::builder()

@@ -1,5 +1,7 @@
 use crate::{prelude::*, storage::descriptors::{ShaderBinding, Layouts, build_layout}};
-use anyhow::Result;
+use anyhow::{anyhow, Result};
+use std::{rc::{Weak, Rc}, collections::HashMap};
+use by_address::ByAddress;
 
 #[derive(Debug, Clone)]
 pub enum ShaderOptions {
@@ -71,12 +73,14 @@ impl std::ops::BitOr for ShaderOptions {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct ShaderCode {
     pub code: Vec<u32>,
     pub kind: vk::ShaderStageFlags,
     pub layout: Vec<ShaderBinding>
 }
 
+#[derive(Debug, Clone)]
 pub struct ShaderEffect {
     pub modules: Vec<ShaderCode>,
     pub layouts: Layouts,
@@ -91,4 +95,63 @@ impl ShaderEffect {
             modules,
         })
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct Pipeline {
+
+}
+
+pub struct MaterialSkeleton {
+    pub effects: Vec<Rc<ShaderEffect>>
+}
+
+#[derive(Default)]
+pub struct MaterialSystem {
+    pipelines: HashMap<ByAddress<Rc<ShaderEffect>>, Option<Pipeline>>,
+}
+
+impl MaterialSystem {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn register_effect(&mut self, loader: &Loader, modules: impl Into<Vec<ShaderCode>>) -> Result<Rc<ShaderEffect>> {
+        let effect = Rc::new(ShaderEffect::new(loader, modules)?);
+        match self.pipelines.insert(ByAddress(effect.clone()), None) {
+            Some(_) => Err(anyhow!("Effect already registered")),
+            None => Ok(effect)
+        }
+    }
+
+    pub fn build_material(&mut self, skeleton: MaterialSkeleton) -> Result<Material> {
+        let pipelines = skeleton
+            .effects
+            .into_iter()
+            .map(|effect| {
+                self.build_pipeline(effect).map(Clone::clone)
+            })
+            .collect::<Result<Vec<_>>>()?;
+        Err(anyhow!(""))
+    }
+
+    pub fn build_pipeline(&mut self, effect: Rc<ShaderEffect>) -> Result<&Pipeline> {
+        match self.pipelines.get_mut(&ByAddress(effect.clone())).ok_or(anyhow!("Unknown effect"))? {
+            Some(pipeline) => Ok(pipeline),
+            unbuilt => {
+                *unbuilt = Some(Self::build_pipeline_uncached(effect));
+                Ok(unbuilt.as_ref().unwrap())
+            },
+        }
+    }
+
+    fn build_pipeline_uncached(effect: Rc<ShaderEffect>) -> Pipeline {
+        Pipeline {
+            
+        }
+    }
+}
+
+pub struct Material {
+
 }

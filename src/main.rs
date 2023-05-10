@@ -76,7 +76,7 @@ fn main() -> Result<()> {
     let shaders = Shaders { vertex, fragment };
     let layouts = descriptors::get_layouts(&loader, &[&shaders.vertex, &shaders.fragment])?;
     let pipeline =
-        unsafe { pipeline::get_pipeline(&loader, pdevice, present_pass, shaders, &layouts)? };
+        unsafe { pipeline::get_present_pipeline(&loader, pdevice, present_pass, shaders, &layouts)? };
     let pools = get_command_pools(
         &loader,
         &queues,

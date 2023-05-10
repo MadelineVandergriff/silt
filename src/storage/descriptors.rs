@@ -111,6 +111,7 @@ impl BindableVec for () {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct Layouts {
     pub descriptors: HashMap<DescriptorFrequency, vk::DescriptorSetLayout>,
     pub pipeline: vk::PipelineLayout,
