@@ -1,14 +1,11 @@
 use super::{
-    descriptors::{Bindable, DescriptorWrite, DescriptorWriter, ResourceType},
+    descriptors::{Bindable, DescriptorWrite, DescriptorWriter},
     image::Image,
 };
 use crate::prelude::*;
 use crate::sync::CommandPool;
 use anyhow::{anyhow, Result};
-use std::{
-    cell::{Cell, RefCell},
-    marker::PhantomData,
-};
+use std::cell::{Cell, RefCell};
 
 #[derive(Clone, Debug)]
 pub struct Buffer {
@@ -77,7 +74,7 @@ impl<T: Bindable + Default> DescriptorWriter for BoundBuffer<T> {
                     .offset(0)
                     .range(buffer.size)
             }),
-            T::default().binding()
+            T::default().binding(),
         )
     }
 }

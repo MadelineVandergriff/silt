@@ -275,7 +275,12 @@ where
 {
     let descriptors = shaders
         .into_iter()
-        .flat_map(|shader| std::iter::zip([shader.kind].into_iter().cycle(), shader.layout.clone()))
+        .flat_map(|shader| std::iter::zip([shader.kind].into_iter().cycle(), shader.resources.clone()))
+        .filter_map(|(stage, resource)| {
+            resource
+                .get_shader_binding()
+                .map(|&binding| (stage, binding))
+        })
         .group_by(|(_, binding)| (binding.binding, binding.frequency))
         .into_iter()
         .map(|(_, group)| {

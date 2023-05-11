@@ -6,9 +6,8 @@ use std::fs;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
 
-use crate::material::{ShaderCode, ShaderOptions};
+use crate::material::{ShaderCode, ShaderOptions, ResourceDescription};
 use crate::prelude::shader_kind_to_shader_stage_flags;
-use crate::storage::descriptors::ShaderBinding;
 
 static SHADERC_COMPILER: Lazy<Compiler> = Lazy::new(|| Compiler::new().unwrap());
 
@@ -30,14 +29,13 @@ macro_rules! shader {
 pub fn __get_shader_code(
     path: &str,
     text: &str,
-    layout: impl Into<Vec<ShaderBinding>>,
+    layout: impl Into<Vec<ResourceDescription>>,
     options: ShaderOptions,
     invocation_path: PathBuf,
 ) -> Result<ShaderCode> {
-    let options = options.to_vec();
 
-    let cache_enabled = options.contains(&ShaderOptions::Cache) && cfg!(target_os = "linux");
-    let compile_options = if options.contains(&ShaderOptions::HLSL) {
+    let cache_enabled = options.contains(ShaderOptions::CACHE) && cfg!(target_os = "linux");
+    let compile_options = if options.contains(ShaderOptions::HLSL) {
         let mut options = CompileOptions::new().unwrap();
         options.set_source_language(shaderc::SourceLanguage::HLSL);
         Some(options)
@@ -61,7 +59,7 @@ pub fn __get_shader_code(
                 return Ok(ShaderCode {
                     code,
                     kind: shader_kind_to_shader_stage_flags(kind),
-                    layout: layout.into(),
+                    resources: layout.into(),
                 });
             }
             _ => (),
@@ -80,7 +78,7 @@ pub fn __get_shader_code(
     Ok(ShaderCode {
         code,
         kind: shader_kind_to_shader_stage_flags(kind),
-        layout: layout.into()
+        resources: layout.into()
     })
 }
 
