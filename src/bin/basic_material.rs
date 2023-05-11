@@ -2,7 +2,7 @@ use memoffset::offset_of;
 use silt::material::{ResourceDescription, ShaderOptions};
 use silt::prelude::*;
 use silt::shader;
-use silt::storage::descriptors::{ShaderBinding, DescriptorFrequency};
+use silt::storage::descriptors::{ShaderBinding, DescriptorFrequency, VertexInput};
 use silt::storage::image::ImageCreateInfo;
 
 struct Vertex {
@@ -10,7 +10,7 @@ struct Vertex {
     uv: glam::Vec2,
 }
 
-impl Vertex {
+impl VertexInput for Vertex {
     fn bindings() -> Vec<vk::VertexInputBindingDescription> {
         vec![vk::VertexInputBindingDescription::builder()
             .binding(0)
@@ -38,10 +38,7 @@ impl Vertex {
 }
 
 fn main() {
-    let vertex = ResourceDescription::VertexInput {
-        bindings: Vertex::bindings(),
-        attributes: Vertex::attributes(),
-    };
+    let vertex = Vertex::resource_description();
 
     let texture = ResourceDescription::SampledImage {
         binding: ShaderBinding {
@@ -63,4 +60,6 @@ fn main() {
             name: todo!(),
         },
     };
+
+    let x = ResourceDescription::Uniform { binding: (), stride: (), elements: (), host_visible: () }
 }

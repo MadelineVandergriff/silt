@@ -1,4 +1,4 @@
-use crate::{material::ShaderCode, pipeline::Shader, prelude::*};
+use crate::{material::{ShaderCode, ResourceDescription}, pipeline::Shader, prelude::*};
 
 use anyhow::{anyhow, Result};
 use impl_trait_for_tuples::impl_for_tuples;
@@ -335,4 +335,13 @@ where
         descriptors,
         pipeline,
     })
+}
+
+pub trait VertexInput {
+    fn bindings() -> Vec<vk::VertexInputBindingDescription>;
+    fn attributes() -> Vec<vk::VertexInputAttributeDescription>;
+
+    fn resource_description() -> ResourceDescription {
+        ResourceDescription::VertexInput { bindings: Self::bindings(), attributes: Self::attributes() }
+    }
 }

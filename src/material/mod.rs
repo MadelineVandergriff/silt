@@ -1,14 +1,14 @@
 use crate::{
     prelude::*,
-    storage::{descriptors::{build_layout, Layouts, ShaderBinding}, image::{ImageCreateInfo, AttachmentType}},
+    storage::{
+        descriptors::{build_layout, DescriptorFrequency, Layouts, ShaderBinding, VertexInput},
+        image::{AttachmentType, ImageCreateInfo},
+    },
 };
 use anyhow::{anyhow, Result};
 use bitflags::bitflags;
 use by_address::ByAddress;
-use std::{
-    collections::HashMap,
-    rc::Rc,
-};
+use std::{collections::HashMap, rc::Rc};
 
 bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -113,7 +113,7 @@ pub enum ResourceDescription {
         binding: ShaderBinding,
         stride: vk::DeviceSize,
         elements: usize,
-        host_visible: bool
+        host_visible: bool,
     },
     SampledImage {
         binding: ShaderBinding,
@@ -126,17 +126,31 @@ pub enum ResourceDescription {
     Attachment {
         binding: ShaderBinding,
         ty: AttachmentType,
-        format: vk::Format
+        format: vk::Format,
     },
 }
 
 impl ResourceDescription {
     pub fn get_shader_binding(&self) -> Option<&ShaderBinding> {
         match self {
-            Self::Uniform { binding, ..} => Some(binding),
+            Self::Uniform { binding, .. } => Some(binding),
             Self::SampledImage { binding, .. } => Some(binding),
             Self::Attachment { binding, .. } => Some(binding),
             _ => None,
+        }
+    }
+
+    pub fn create_uniform<T>(binding: u32, frequency: DescriptorFrequency) -> Self {
+        Self::Uniform {
+            binding: ShaderBinding {
+                ty: vk::DescriptorType::UNIFORM_BUFFER,
+                frequency,
+                binding,
+                count: 1,
+            },
+            stride: std::mem::size_of::<T>() as u64,
+            elements: 1,
+            host_visible: true,
         }
     }
 }
