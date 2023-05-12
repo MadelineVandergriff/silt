@@ -1,13 +1,23 @@
 use memoffset::offset_of;
-use silt::material::{ResourceDescription, ShaderOptions};
+use silt::loader::LoaderCreateInfo;
+use silt::material::{ResourceDescription, ShaderOptions, MaterialSystem, MaterialSkeleton};
 use silt::prelude::*;
+use silt::properties::{DeviceFeaturesRequest, DeviceFeatures};
 use silt::shader;
 use silt::storage::descriptors::{ShaderBinding, DescriptorFrequency, VertexInput};
 use silt::storage::image::ImageCreateInfo;
+use anyhow::Result;
+use silt::sync::{QueueRequest, QueueType};
 
 struct Vertex {
     pos: glam::Vec3,
     uv: glam::Vec2,
+}
+
+struct MVP {
+    model: glam::Mat4,
+    view: glam::Mat4,
+    proj: glam::Mat4,
 }
 
 impl VertexInput for Vertex {
@@ -37,29 +47,37 @@ impl VertexInput for Vertex {
     }
 }
 
-fn main() {
+fn main() -> Result<()> {
     let vertex = Vertex::resource_description();
+    let mvp = ResourceDescription::uniform::<MVP>(0, DescriptorFrequency::Global);
+    let texture = ResourceDescription::sampled_image(1, DescriptorFrequency::Global);
 
-    let texture = ResourceDescription::SampledImage {
-        binding: ShaderBinding {
-            ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-            frequency: DescriptorFrequency::Global,
-            binding: 0,
-            count: 1,
+    let vertex_shader = shader!("../../assets/shaders/model_loading.vert", vec![vertex, mvp], ShaderOptions::HLSL)?;
+    let fragment_shader = shader!("../../assets/shaders/model_loading.frag", vec![texture], ShaderOptions::HLSL)?;
+
+    let loader_ci = LoaderCreateInfo {
+        width: 1920,
+        height: 1080,
+        title: "Basic Material".into(),
+        device_features: DeviceFeaturesRequest {
+            required: DeviceFeatures::SAMPLER_ANISOTROPY,
+            prefered: DeviceFeatures::empty(),
         },
-        image_info: ImageCreateInfo {
-            width: todo!(),
-            height: todo!(),
-            mip_levels: todo!(),
-            format: todo!(),
-            tiling: todo!(),
-            usage: todo!(),
-            location: todo!(),
-            samples: todo!(),
-            view_aspect: todo!(),
-            name: todo!(),
-        },
+        queue_requests: vec![
+            QueueRequest { ty: QueueType::Graphics, count: 1 }
+        ],
     };
 
-    let x = ResourceDescription::Uniform { binding: (), stride: (), elements: (), host_visible: () }
+    let (loader, _) = Loader::new(loader_ci)?;
+
+    let mut material_system = MaterialSystem::new(&loader);
+    let model_loading = material_system.register_effect([vertex_shader, fragment_shader])?;
+
+    let skeleton = MaterialSkeleton {
+        effects: vec![model_loading.clone()],
+    };
+
+    let pipeline = material_system.build_pipeline(model_loading)?;
+
+    Ok(())
 }

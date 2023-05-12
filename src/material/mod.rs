@@ -2,8 +2,8 @@ use crate::{
     prelude::*,
     storage::{
         descriptors::{build_layout, DescriptorFrequency, Layouts, ShaderBinding, VertexInput},
-        image::{AttachmentType, ImageCreateInfo},
-    },
+        image::{AttachmentType, ImageCreateInfo, SampledImage, Image}, buffer::Buffer,
+    }, loader,
 };
 use anyhow::{anyhow, Result};
 use bitflags::bitflags;
@@ -49,28 +49,32 @@ impl ShaderEffect {
 }
 
 #[derive(Debug, Clone)]
-pub struct Pipeline {}
+pub struct Pipeline {
+    pass: vk::RenderPass,
+}
 
 pub struct MaterialSkeleton {
     pub effects: Vec<Rc<ShaderEffect>>,
 }
 
-#[derive(Default)]
-pub struct MaterialSystem {
+pub struct MaterialSystem<'a> {
+    loader: &'a Loader,
     pipelines: HashMap<ByAddress<Rc<ShaderEffect>>, Option<Pipeline>>,
 }
 
-impl MaterialSystem {
-    pub fn new() -> Self {
-        Self::default()
+impl<'a> MaterialSystem<'a> {
+    pub fn new(loader: &'a Loader) -> Self {
+        Self {
+            loader,
+            pipelines: Default::default()
+        }
     }
 
     pub fn register_effect(
         &mut self,
-        loader: &Loader,
         modules: impl Into<Vec<ShaderCode>>,
     ) -> Result<Rc<ShaderEffect>> {
-        let effect = Rc::new(ShaderEffect::new(loader, modules)?);
+        let effect = Rc::new(ShaderEffect::new(self.loader, modules)?);
         match self.pipelines.insert(ByAddress(effect.clone()), None) {
             Some(_) => Err(anyhow!("Effect already registered")),
             None => Ok(effect),
@@ -101,7 +105,7 @@ impl MaterialSystem {
     }
 
     fn build_pipeline_uncached(effect: Rc<ShaderEffect>) -> Pipeline {
-        Pipeline {}
+        todo!()
     }
 }
 
@@ -117,14 +121,13 @@ pub enum ResourceDescription {
     },
     SampledImage {
         binding: ShaderBinding,
-        image_info: ImageCreateInfo,
+        layout: vk::ImageLayout,
     },
     VertexInput {
         bindings: Vec<vk::VertexInputBindingDescription>,
         attributes: Vec<vk::VertexInputAttributeDescription>,
     },
     Attachment {
-        binding: ShaderBinding,
         ty: AttachmentType,
         format: vk::Format,
     },
@@ -135,12 +138,18 @@ impl ResourceDescription {
         match self {
             Self::Uniform { binding, .. } => Some(binding),
             Self::SampledImage { binding, .. } => Some(binding),
-            Self::Attachment { binding, .. } => Some(binding),
+            Self::Attachment { ty, .. } => {
+                match ty {
+                    AttachmentType::Input(binding) => Some(binding),
+                    AttachmentType::DepthInput(binding) => Some(binding),
+                    _ => None
+                }
+            },
             _ => None,
         }
     }
 
-    pub fn create_uniform<T>(binding: u32, frequency: DescriptorFrequency) -> Self {
+    pub fn uniform<T>(binding: u32, frequency: DescriptorFrequency) -> Self {
         Self::Uniform {
             binding: ShaderBinding {
                 ty: vk::DescriptorType::UNIFORM_BUFFER,
@@ -153,4 +162,22 @@ impl ResourceDescription {
             host_visible: true,
         }
     }
+
+    pub fn sampled_image(binding: u32, frequency: DescriptorFrequency) -> Self {
+        Self::SampledImage {
+            binding: ShaderBinding {
+                ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+                frequency,
+                binding,
+                count: 1,
+            },
+            layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+        }
+    }
+}
+
+pub enum Resource {
+    Uniform(Rc<Buffer>),
+    SampledImage(Rc<SampledImage>),
+    Attachment(Rc<Image>),
 }

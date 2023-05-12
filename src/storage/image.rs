@@ -5,7 +5,7 @@ use anyhow::Result;
 use cached::proc_macro::once;
 use itertools::Itertools;
 
-use super::{buffer::*, descriptors::{DescriptorWriter, DescriptorWrite, BindingDescription, Bindable}};
+use super::{buffer::*, descriptors::{DescriptorWriter, DescriptorWrite, BindingDescription, Bindable, ShaderBinding}};
 
 #[derive(Debug, Clone, Default)]
 pub struct Image {
@@ -460,7 +460,7 @@ pub fn get_sampler(loader: &Loader, features: ProvidedFeatures, image: Image, bi
 
 #[derive(Debug, Clone, Copy)]
 pub enum AttachmentType {
-    Color, Depth, Input, DepthInput, Resolve, DepthResolve, Swapchain
+    Color, Depth, Input(ShaderBinding), DepthInput(ShaderBinding), Resolve, DepthResolve, Swapchain
 }
 
 impl AttachmentType {
@@ -468,8 +468,8 @@ impl AttachmentType {
         match self {
             AttachmentType::Color => vk::ImageUsageFlags::COLOR_ATTACHMENT,
             AttachmentType::Depth => vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
-            AttachmentType::Input => vk::ImageUsageFlags::INPUT_ATTACHMENT | vk::ImageUsageFlags::COLOR_ATTACHMENT,
-            AttachmentType::DepthInput => vk::ImageUsageFlags::INPUT_ATTACHMENT | vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
+            AttachmentType::Input(_) => vk::ImageUsageFlags::INPUT_ATTACHMENT | vk::ImageUsageFlags::COLOR_ATTACHMENT,
+            AttachmentType::DepthInput(_) => vk::ImageUsageFlags::INPUT_ATTACHMENT | vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
             AttachmentType::Resolve => vk::ImageUsageFlags::COLOR_ATTACHMENT,
             AttachmentType::DepthResolve => vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
             _ => panic!("Unsupported attachment type")
@@ -480,8 +480,8 @@ impl AttachmentType {
         match self {
             AttachmentType::Color => vk::ImageAspectFlags::COLOR,
             AttachmentType::Depth => vk::ImageAspectFlags::DEPTH | vk::ImageAspectFlags::STENCIL,
-            AttachmentType::Input => vk::ImageAspectFlags::COLOR,
-            AttachmentType::DepthInput => vk::ImageAspectFlags::DEPTH | vk::ImageAspectFlags::STENCIL,
+            AttachmentType::Input(_) => vk::ImageAspectFlags::COLOR,
+            AttachmentType::DepthInput(_) => vk::ImageAspectFlags::DEPTH | vk::ImageAspectFlags::STENCIL,
             AttachmentType::Resolve => vk::ImageAspectFlags::COLOR,
             AttachmentType::DepthResolve => vk::ImageAspectFlags::DEPTH | vk::ImageAspectFlags::STENCIL,
             _ => panic!("Unsupported attachment type")
@@ -492,8 +492,8 @@ impl AttachmentType {
         match self {
             AttachmentType::Color => vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
             AttachmentType::Depth => vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-            AttachmentType::Input => vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
-            AttachmentType::DepthInput => vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+            AttachmentType::Input(_) => vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+            AttachmentType::DepthInput(_) => vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
             AttachmentType::Resolve => vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
             AttachmentType::DepthResolve => vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
             _ => panic!("Unsupported attachment type")
