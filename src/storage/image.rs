@@ -14,6 +14,8 @@ pub struct Image {
     pub allocation: vk::Allocation,
     pub size: vk::Extent3D,
     pub mips: u32,
+    pub samples: vk::SampleCountFlags,
+    pub format: vk::Format,
     pub layout: Cell<vk::ImageLayout>,
 }
 
@@ -165,6 +167,8 @@ pub unsafe fn create_image(loader: &Loader, create_info: ImageCreateInfo) -> Res
         allocation,
         size,
         mips: create_info.mip_levels,
+        samples: create_info.samples,
+        format: create_info.format,
         layout: Cell::new(vk::ImageLayout::UNDEFINED)
     })
 }
@@ -496,7 +500,15 @@ impl AttachmentType {
             AttachmentType::DepthInput(_) => vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
             AttachmentType::Resolve => vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
             AttachmentType::DepthResolve => vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+            AttachmentType::Swapchain => vk::ImageLayout::PRESENT_SRC_KHR,
             _ => panic!("Unsupported attachment type")
+        }
+    }
+
+    pub fn get_load_op(&self) -> vk::AttachmentLoadOp {
+        match self {
+            AttachmentType::Resolve | AttachmentType::DepthResolve => vk::AttachmentLoadOp::DONT_CARE,
+            _ => vk::AttachmentLoadOp::CLEAR,
         }
     }
 }

@@ -176,8 +176,13 @@ impl ResourceDescription {
     }
 }
 
-pub enum Resource {
-    Uniform(Rc<Buffer>),
-    SampledImage(Rc<SampledImage>),
-    Attachment(Rc<Image>),
+pub enum Resource<'a> {
+    Uniform(&'a Buffer),
+    SampledImage(&'a SampledImage),
+    Attachment(&'a Image),
+}
+
+pub struct CombinedResource<'a> {
+    pub resource: Resource<'a>,
+    pub description: ResourceDescription,
 }
