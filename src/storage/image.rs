@@ -462,12 +462,26 @@ pub fn get_sampler(loader: &Loader, features: ProvidedFeatures, image: Image, bi
     })
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum AttachmentType {
     Color, Depth, Input(ShaderBinding), DepthInput(ShaderBinding), Resolve, DepthResolve, Swapchain
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum AttachmentReferenceType {
+    Color, DepthStencil, Resolve, Input
+}
+
 impl AttachmentType {
+    pub fn get_reference_type(&self) -> AttachmentReferenceType {
+        match self {
+            AttachmentType::Color | AttachmentType::Swapchain => AttachmentReferenceType::Color,
+            AttachmentType::Depth => AttachmentReferenceType::DepthStencil,
+            Self::Input(_) | Self::DepthInput(_) => AttachmentReferenceType::Input,
+            Self::Resolve | Self::DepthResolve => AttachmentReferenceType::Resolve
+        }
+    }
+
     pub fn get_usage(&self) -> vk::ImageUsageFlags {
         match self {
             AttachmentType::Color => vk::ImageUsageFlags::COLOR_ATTACHMENT,

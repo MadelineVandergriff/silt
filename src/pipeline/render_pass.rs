@@ -1,12 +1,13 @@
 use std::collections::HashMap;
 
 use itertools::Itertools;
+use anyhow::{Result, anyhow};
 
 use crate::loader::Loader;
 use crate::material::{CombinedResource, Resource, ResourceDescription, ShaderEffect};
 use crate::prelude::*;
 use crate::properties::get_sample_counts;
-use crate::storage::image;
+use crate::storage::image::{self, AttachmentReferenceType};
 
 pub unsafe fn get_present_pass(
     loader: &Loader,
@@ -106,7 +107,7 @@ pub unsafe fn get_present_pass(
 pub fn create_render_pass<'a>(
     loader: &Loader,
     resources: impl IntoIterator<Item = CombinedResource<'a>>,
-) -> vk::RenderPass {
+) -> Result<vk::RenderPass> {
     let (attachments, types): (Vec<_>, Vec<_>) = resources
         .into_iter()
         .filter_map(|resource| match (resource.resource, resource.description) {
@@ -127,15 +128,14 @@ pub fn create_render_pass<'a>(
         })
         .unzip();
 
-    let attachment_references = attachments
-        .iter()
+    let attachment_references = std::iter::zip(&attachments, &types)
         .enumerate()
-        .group_by(|(_, attachment)| attachment.final_layout)
+        .group_by(|(_, (_, ty))| ty.get_reference_type())
         .into_iter()
-        .map(|(layout, group)| (
-                layout,
+        .map(|(ty, group)| (
+                ty,
                 group
-                    .map(|(idx, attachment)| {
+                    .map(|(idx, (attachment, _))| {
                         vk::AttachmentReference::builder()
                             .attachment(idx as u32)
                             .layout(attachment.final_layout)
@@ -145,11 +145,21 @@ pub fn create_render_pass<'a>(
         ))
         .collect::<HashMap<_, _>>();
 
-    let subpass = vk::SubpassDescription::builder()
-        .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
-        .color_attachments()
-        .resolve_attachments(std::slice::from_ref(&color_resolve_attachment_reference))
-        .depth_stencil_attachment(&depth_attachment_reference);
+    let null = vec![];
 
-    vk::RenderPass::null()
+    let mut subpass = vk::SubpassDescription::builder()
+        .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
+        .color_attachments(attachment_references.get(&AttachmentReferenceType::Color).unwrap_or(&null))
+        .resolve_attachments(attachment_references.get(&AttachmentReferenceType::Resolve).unwrap_or(&null))
+        .input_attachments(attachment_references.get(&AttachmentReferenceType::Input).unwrap_or(&null));
+
+    if let Some(depth_stencil) = attachment_references.get(&AttachmentReferenceType::DepthStencil) {
+        if depth_stencil.len() != 1 {
+            return Err(anyhow!("Subpass must have exactly 1 or 0 depth/stencil attachments"));
+        }
+
+        subpass = subpass.depth_stencil_attachment(&depth_stencil[0]);
+    }
+
+    Ok(vk::RenderPass::null())
 }
