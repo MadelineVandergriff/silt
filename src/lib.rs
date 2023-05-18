@@ -10,3 +10,4 @@ pub mod pipeline;
 pub mod model;
 pub mod properties;
 pub mod material;
+pub mod resources;
