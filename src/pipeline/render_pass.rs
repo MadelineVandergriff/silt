@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
-use itertools::Itertools;
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
+use itertools::{Itertools, any};
 
 use crate::loader::Loader;
 use crate::material::{CombinedResource, Resource, ResourceDescription, ShaderEffect};
@@ -104,35 +104,45 @@ pub unsafe fn get_present_pass(
     render_pass
 }
 
+pub struct RenderPass {
+    pub pass: vk::RenderPass,
+    pub framebuffer: vk::Framebuffer,
+}
+
 pub fn create_render_pass<'a>(
     loader: &Loader,
     resources: impl IntoIterator<Item = CombinedResource<'a>>,
-) -> Result<vk::RenderPass> {
-    let (attachments, types): (Vec<_>, Vec<_>) = resources
+) -> Result<RenderPass> {
+    let (attachments, views, sizes, types): (Vec<_>, Vec<_>, Vec<_>, Vec<_>) = resources
         .into_iter()
         .filter_map(|resource| match (resource.resource, resource.description) {
-            (Resource::Attachment(image), ResourceDescription::Attachment { ty, format }) => Some((
-                vk::AttachmentDescription::builder()
-                    .format(image.format)
-                    .samples(image.samples)
-                    .load_op(ty.get_load_op())
-                    .store_op(vk::AttachmentStoreOp::STORE)
-                    .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
-                    .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
-                    .initial_layout(vk::ImageLayout::UNDEFINED)
-                    .final_layout(ty.get_layout())
-                    .build(),
-                ty
-            )),
+            (Resource::Attachment(image), ResourceDescription::Attachment { ty, format }) => {
+                Some((
+                    vk::AttachmentDescription::builder()
+                        .format(image.format)
+                        .samples(image.samples)
+                        .load_op(ty.get_load_op())
+                        .store_op(vk::AttachmentStoreOp::STORE)
+                        .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
+                        .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
+                        .initial_layout(vk::ImageLayout::UNDEFINED)
+                        .final_layout(ty.get_layout())
+                        .build(),
+                    image.view,
+                    image.size,
+                    ty,
+                ))
+            }
             _ => None,
         })
-        .unzip();
+        .multiunzip();
 
     let attachment_references = std::iter::zip(&attachments, &types)
         .enumerate()
         .group_by(|(_, (_, ty))| ty.get_reference_type())
         .into_iter()
-        .map(|(ty, group)| (
+        .map(|(ty, group)| {
+            (
                 ty,
                 group
                     .map(|(idx, (attachment, _))| {
@@ -142,24 +152,96 @@ pub fn create_render_pass<'a>(
                             .build()
                     })
                     .collect_vec(),
-        ))
+            )
+        })
         .collect::<HashMap<_, _>>();
 
     let null = vec![];
 
     let mut subpass = vk::SubpassDescription::builder()
         .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
-        .color_attachments(attachment_references.get(&AttachmentReferenceType::Color).unwrap_or(&null))
-        .resolve_attachments(attachment_references.get(&AttachmentReferenceType::Resolve).unwrap_or(&null))
-        .input_attachments(attachment_references.get(&AttachmentReferenceType::Input).unwrap_or(&null));
+        .color_attachments(
+            attachment_references
+                .get(&AttachmentReferenceType::Color)
+                .unwrap_or(&null),
+        )
+        .resolve_attachments(
+            attachment_references
+                .get(&AttachmentReferenceType::Resolve)
+                .unwrap_or(&null),
+        )
+        .input_attachments(
+            attachment_references
+                .get(&AttachmentReferenceType::Input)
+                .unwrap_or(&null),
+        );
 
     if let Some(depth_stencil) = attachment_references.get(&AttachmentReferenceType::DepthStencil) {
         if depth_stencil.len() != 1 {
-            return Err(anyhow!("Subpass must have exactly 1 or 0 depth/stencil attachments"));
+            return Err(anyhow!(
+                "Subpass must have exactly 1 or 0 depth/stencil attachments"
+            ));
         }
 
         subpass = subpass.depth_stencil_attachment(&depth_stencil[0]);
     }
 
-    Ok(vk::RenderPass::null())
+    let start_dependency = vk::SubpassDependency::builder()
+        .src_subpass(vk::SUBPASS_EXTERNAL)
+        .dst_subpass(0)
+        .src_stage_mask(vk::PipelineStageFlags::BOTTOM_OF_PIPE)
+        .dst_stage_mask(
+            vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT
+                | vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS,
+        )
+        .src_access_mask(vk::AccessFlags::MEMORY_READ)
+        .dst_access_mask(
+            vk::AccessFlags::COLOR_ATTACHMENT_READ
+                | vk::AccessFlags::COLOR_ATTACHMENT_WRITE
+                | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_READ
+                | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
+        );
+
+    let end_dependency = vk::SubpassDependency::builder()
+        .src_subpass(0)
+        .dst_subpass(vk::SUBPASS_EXTERNAL)
+        .src_stage_mask(
+            vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT
+                | vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS,
+        )
+        .dst_stage_mask(vk::PipelineStageFlags::BOTTOM_OF_PIPE)
+        .src_access_mask(
+            vk::AccessFlags::COLOR_ATTACHMENT_READ
+                | vk::AccessFlags::COLOR_ATTACHMENT_WRITE
+                | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_READ
+                | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
+        )
+        .dst_access_mask(vk::AccessFlags::MEMORY_READ);
+
+    let dependencies = [start_dependency.build(), end_dependency.build()];
+
+    let render_pass_ci = vk::RenderPassCreateInfo::builder()
+        .attachments(&attachments)
+        .dependencies(&dependencies)
+        .subpasses(std::slice::from_ref(&subpass));
+
+    let render_pass = unsafe { loader.device.create_render_pass(&render_pass_ci, None)? };
+
+    if !sizes.iter().all_equal() {
+        return Err(anyhow!("All framebuffer attachments must have the same size"))
+    }
+
+    let framebuffer_ci = vk::FramebufferCreateInfo::builder()
+        .attachments(&views)
+        .render_pass(render_pass)
+        .layers(1)
+        .width(sizes[0].width)
+        .height(sizes[0].height);
+
+    let framebuffer = unsafe { loader.device.create_framebuffer(&framebuffer_ci, None)? };
+
+    Ok(RenderPass{
+        pass: render_pass,
+        framebuffer
+    })
 }
