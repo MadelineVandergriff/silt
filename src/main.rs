@@ -7,6 +7,7 @@ use silt::model::{Model, Vertex, MVP};
 use silt::pipeline::{FragmentShader, Shaders, VertexShader};
 use silt::prelude::*;
 use silt::properties::{DeviceFeatures, DeviceFeaturesRequest, ProvidedFeatures};
+use silt::resources::{ParitySet, Parity};
 use silt::storage::buffer::get_bound_buffer;
 use silt::storage::descriptors::{
     get_descriptors, BindingDescription, DescriptorFrequency, DescriptorWriter, Layouts,

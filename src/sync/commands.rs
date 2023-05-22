@@ -1,4 +1,4 @@
-use crate::{loader::Loader, prelude::*};
+use crate::{loader::Loader, prelude::*, resources::ParitySet};
 
 use super::QueueHandle;
 use anyhow::Result;

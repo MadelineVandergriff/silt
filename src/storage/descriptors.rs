@@ -1,4 +1,4 @@
-use crate::{material::{ShaderCode, ResourceDescription}, pipeline::Shader, prelude::*};
+use crate::{material::{ShaderCode, ResourceDescription}, pipeline::Shader, prelude::*, resources::ParitySet};
 
 use anyhow::{anyhow, Result};
 use impl_trait_for_tuples::impl_for_tuples;

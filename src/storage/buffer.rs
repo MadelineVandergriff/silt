@@ -2,7 +2,7 @@ use super::{
     descriptors::{Bindable, DescriptorWrite, DescriptorWriter},
     image::Image,
 };
-use crate::prelude::*;
+use crate::{prelude::*, resources::{ParitySet, Parity}};
 use crate::sync::CommandPool;
 use anyhow::{anyhow, Result};
 use std::cell::{Cell, RefCell};

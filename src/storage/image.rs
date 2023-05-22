@@ -1,6 +1,6 @@
 use std::cell::Cell;
 
-use crate::{loader::Loader, prelude::*, sync::CommandPool, properties::ProvidedFeatures};
+use crate::{loader::Loader, prelude::*, sync::CommandPool, properties::ProvidedFeatures, resources::ParitySet};
 use anyhow::Result;
 use cached::proc_macro::once;
 use itertools::Itertools;
