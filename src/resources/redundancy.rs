@@ -1,4 +1,6 @@
+use anyhow::{anyhow, Result};
 use derive_more::{From, Index, IndexMut, Into, IntoIterator};
+use itertools::Itertools;
 use std::borrow::Borrow;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -50,7 +52,7 @@ impl<I: Borrow<Redundancy>, T: Iterator<Item = I>> RedundancyValidity for T {
 }
 
 pub trait RedundancyType {
-    fn get_redundancy() -> Redundancy {
+    fn get_redundancy(&self) -> Redundancy {
         Redundancy::Single
     }
 }
@@ -59,8 +61,18 @@ pub trait RedundancyType {
 pub struct SwapSet<T>(Vec<T>);
 
 impl<T> RedundancyType for SwapSet<T> {
-    fn get_redundancy() -> Redundancy {
+    fn get_redundancy(&self) -> Redundancy {
         Redundancy::Swapchain
+    }
+}
+
+impl<T> SwapSet<T> {
+    pub fn iter(&self) -> std::slice::Iter<'_, T> {
+        self.0.iter()
+    }
+
+    pub fn as_ref(&self) -> SwapSet<&T> {
+        self.iter().collect_vec().into()
     }
 }
 
@@ -79,14 +91,14 @@ impl Parity {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct ParitySet<T> {
     pub even: T,
     pub odd: T,
 }
 
 impl<T> RedundancyType for ParitySet<T> {
-    fn get_redundancy() -> Redundancy {
+    fn get_redundancy(&self) -> Redundancy {
         Redundancy::Parity
     }
 }
@@ -130,6 +142,19 @@ impl<T> ParitySet<T> {
             odd: f(&self.odd),
         }
     }
+
+    pub fn as_ref(&self) -> ParitySet<&T> {
+        self.iter().collect()
+    }
+}
+
+impl<T: Clone> ParitySet<T> {
+    pub fn from_single(value: T) -> Self {
+        Self {
+            even: value.clone(),
+            odd: value,
+        }
+    }
 }
 
 impl<T> IntoIterator for ParitySet<T> {
@@ -149,12 +174,64 @@ impl<T> FromIterator<T> for ParitySet<T> {
         let mut iter = iter.into_iter();
 
         let ret = Self {
-            even: iter.next().expect("{ERR_MSG}"),
-            odd: iter.next().expect("{ERR_MSG}"),
+            even: iter.next().expect("Too few elements: {ERR_MSG}"),
+            odd: iter.next().expect("Too few elements: {ERR_MSG}"),
         };
 
-        assert!(iter.next().is_none(), "{ERR_MSG}");
+        assert!(iter.next().is_none(), "Too many elements: {ERR_MSG}");
 
         ret
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum RedundantSet<T> {
+    Single(T),
+    Parity(ParitySet<T>),
+    Swapchain(SwapSet<T>),
+}
+
+impl<T> RedundancyType for RedundantSet<T> {
+    fn get_redundancy(&self) -> Redundancy {
+        match self {
+            RedundantSet::Single(_) => Redundancy::Single,
+            RedundantSet::Parity(_) => Redundancy::Parity,
+            RedundantSet::Swapchain(_) => Redundancy::Swapchain,
+        }
+    }
+}
+
+impl<T> From<T> for RedundantSet<T> {
+    fn from(value: T) -> Self {
+        Self::Single(value)
+    }
+}
+
+impl<T> From<ParitySet<T>> for RedundantSet<T> {
+    fn from(value: ParitySet<T>) -> Self {
+        Self::Parity(value)
+    }
+}
+
+impl<T> From<SwapSet<T>> for RedundantSet<T> {
+    fn from(value: SwapSet<T>) -> Self {
+        Self::Swapchain(value)
+    }
+}
+
+impl<T> RedundantSet<T> {
+    pub fn as_type(&self, ty: Redundancy) -> Result<RedundantSet<&T>> {
+        Ok(match (self, ty) {
+            (Self::Single(value), Redundancy::Single) => value.into(),
+            (Self::Single(value), Redundancy::Parity) => ParitySet::from_single(value).into(),
+            (Self::Single(value), Redundancy::Swapchain) => SwapSet::from(vec![value]).into(),
+            (Self::Parity(value), Redundancy::Parity) => value.as_ref().into(),
+            (Self::Swapchain(value), Redundancy::Swapchain) => value.as_ref().into(),
+            _ => return Err(anyhow!(
+                "Redundant set of type {:?} not compatible with {:?}",
+                self.get_redundancy(),
+                ty
+            ))
+        })
     }
 }
