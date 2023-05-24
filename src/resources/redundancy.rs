@@ -234,4 +234,26 @@ impl<T> RedundantSet<T> {
             ))
         })
     }
+
+    pub fn iter(&self) -> std::vec::IntoIter<&T> {
+        match self {
+            Self::Single(value) => vec![value].into_iter(),
+            Self::Parity(value) => value.iter().collect_vec().into_iter(),
+            Self::Swapchain(value) => value.iter().collect_vec().into_iter(),
+        }
+    }
+}
+
+impl<T> IntoIterator for RedundantSet<T> {
+    type Item = T;
+
+    type IntoIter = std::vec::IntoIter<T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        match self {
+            Self::Single(value) => vec![value],
+            Self::Parity(value) => value.into_iter().collect(),
+            Self::Swapchain(value) => value.into()
+        }.into_iter()
+    }
 }

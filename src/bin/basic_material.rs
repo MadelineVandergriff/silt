@@ -1,7 +1,7 @@
 use memoffset::offset_of;
 use silt::loader::LoaderCreateInfo;
 use silt::material::{ResourceDescription, ShaderOptions, MaterialSystem, MaterialSkeleton};
-use silt::prelude::*;
+use silt::{prelude::*, resources};
 use silt::properties::{DeviceFeaturesRequest, DeviceFeatures};
 use silt::shader;
 use silt::storage::descriptors::{ShaderBinding, DescriptorFrequency, VertexInput};
@@ -14,6 +14,7 @@ struct Vertex {
     uv: glam::Vec2,
 }
 
+#[allow(dead_code)]
 struct MVP {
     model: glam::Mat4,
     view: glam::Mat4,
@@ -69,6 +70,8 @@ fn main() -> Result<()> {
     };
 
     let (loader, _) = Loader::new(loader_ci)?;
+
+    let mvp_buffer = resources::Buffer::new
 
     let mut material_system = MaterialSystem::new(&loader);
     let model_loading = material_system.register_effect([vertex_shader, fragment_shader])?;
