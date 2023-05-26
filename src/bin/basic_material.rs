@@ -1,6 +1,7 @@
 use memoffset::offset_of;
 use silt::loader::LoaderCreateInfo;
 use silt::material::{ResourceDescription, ShaderOptions, MaterialSystem, MaterialSkeleton};
+use silt::resources::UniformBuffer;
 use silt::{prelude::*, resources};
 use silt::properties::{DeviceFeaturesRequest, DeviceFeatures};
 use silt::shader;
@@ -15,6 +16,7 @@ struct Vertex {
 }
 
 #[allow(dead_code)]
+#[derive(Debug, Default, Clone, Copy)]
 struct MVP {
     model: glam::Mat4,
     view: glam::Mat4,
@@ -53,8 +55,8 @@ fn main() -> Result<()> {
     let mvp = ResourceDescription::uniform::<MVP>(0, DescriptorFrequency::Global);
     let texture = ResourceDescription::sampled_image(1, DescriptorFrequency::Global);
 
-    let vertex_shader = shader!("../../assets/shaders/model_loading.vert", vec![vertex, mvp], ShaderOptions::HLSL)?;
-    let fragment_shader = shader!("../../assets/shaders/model_loading.frag", vec![texture], ShaderOptions::HLSL)?;
+    let vertex_shader = shader!("../../assets/shaders/model_loading.vert", ShaderOptions::HLSL, vertex, *mvp)?;
+    let fragment_shader = shader!("../../assets/shaders/model_loading.frag", ShaderOptions::HLSL)?;
 
     let loader_ci = LoaderCreateInfo {
         width: 1920,
@@ -71,7 +73,7 @@ fn main() -> Result<()> {
 
     let (loader, _) = Loader::new(loader_ci)?;
 
-    let mvp_buffer = resources::Buffer::new
+    let mvp_buffer = UniformBuffer::new(&loader, &mvp, MVP::default());
 
     let mut material_system = MaterialSystem::new(&loader);
     let model_loading = material_system.register_effect([vertex_shader, fragment_shader])?;

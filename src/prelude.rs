@@ -323,6 +323,12 @@ impl Destructible for vk::SwapchainKHR {
     }
 }
 
+pub trait IterDestructible<T: Destructible>: IntoIterator<Item = T> + Sized {
+    fn destroy(self, loader: &Loader) {
+        self.into_iter().for_each(|value| value.destroy(loader));
+    }
+}
+
 pub trait Vectorizable<T> {
     fn to_vec(self) -> Vec<T>;
 }

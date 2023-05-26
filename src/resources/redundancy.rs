@@ -3,6 +3,8 @@ use derive_more::{From, Index, IndexMut, Into, IntoIterator};
 use itertools::Itertools;
 use std::borrow::Borrow;
 
+use crate::prelude::{Destructible, IterDestructible};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Redundancy {
     Single,
@@ -60,6 +62,8 @@ pub trait RedundancyType {
 #[derive(Debug, Clone, Into, From, Index, IndexMut, IntoIterator)]
 pub struct SwapSet<T>(Vec<T>);
 
+impl<T: Destructible> IterDestructible<T> for SwapSet<T> where SwapSet<T>: IntoIterator<Item = T> {}
+
 impl<T> RedundancyType for SwapSet<T> {
     fn get_redundancy(&self) -> Redundancy {
         Redundancy::Swapchain
@@ -96,6 +100,8 @@ pub struct ParitySet<T> {
     pub even: T,
     pub odd: T,
 }
+
+impl<T: Destructible> IterDestructible<T> for ParitySet<T> {}
 
 impl<T> RedundancyType for ParitySet<T> {
     fn get_redundancy(&self) -> Redundancy {
@@ -257,3 +263,5 @@ impl<T> IntoIterator for RedundantSet<T> {
         }.into_iter()
     }
 }
+
+impl<T: Destructible> IterDestructible<T> for RedundantSet<T> {}

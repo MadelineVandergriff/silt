@@ -8,7 +8,7 @@ use crate::{
 use anyhow::{anyhow, Result};
 use bitflags::bitflags;
 use by_address::ByAddress;
-use std::{collections::HashMap, rc::Rc};
+use std::{collections::HashMap, rc::Rc, marker::PhantomData, ops::Deref};
 
 bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -133,6 +133,29 @@ pub enum ResourceDescription {
     },
 }
 
+#[derive(Debug, Clone)]
+pub struct TypedResourceDescription<T> {
+    inner: ResourceDescription,
+    phantom: PhantomData<T>
+}
+
+impl<T> Deref for TypedResourceDescription<T> {
+    type Target = ResourceDescription;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+impl<T> From<ResourceDescription> for TypedResourceDescription<T> {
+    fn from(inner: ResourceDescription) -> Self {
+        Self {
+            inner,
+            phantom: PhantomData
+        }
+    }
+}
+
 impl ResourceDescription {
     pub fn get_shader_binding(&self) -> Option<&ShaderBinding> {
         match self {
@@ -149,7 +172,7 @@ impl ResourceDescription {
         }
     }
 
-    pub fn uniform<T>(binding: u32, frequency: DescriptorFrequency) -> Self {
+    pub fn uniform<T>(binding: u32, frequency: DescriptorFrequency) -> TypedResourceDescription<T> {
         Self::Uniform {
             binding: ShaderBinding {
                 ty: vk::DescriptorType::UNIFORM_BUFFER,
@@ -160,7 +183,7 @@ impl ResourceDescription {
             stride: std::mem::size_of::<T>() as u64,
             elements: 1,
             host_visible: true,
-        }
+        }.into()
     }
 
     pub fn sampled_image(binding: u32, frequency: DescriptorFrequency) -> Self {

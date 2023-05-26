@@ -13,13 +13,13 @@ static SHADERC_COMPILER: Lazy<Compiler> = Lazy::new(|| Compiler::new().unwrap())
 
 #[macro_export]
 macro_rules! shader {
-    ($path: literal, $layout: expr $(, $options: expr)?) => {
-        $crate::macros::__get_shader_code($path, include_str!($path), $layout, ($($options)?).into(), std::path::Path::new(file!()).parent().unwrap().into())
+    ($path: literal, $options: expr $(, $layout: expr)*) => {
+        $crate::macros::__get_shader_code($path, include_str!($path), vec![$($layout.clone() ,)*], ($options).into(), std::path::Path::new(file!()).parent().unwrap().into())
     };
-    ($path: expr, $layout: expr $(, $options: expr)?) => {
+    ($path: expr, $options: expr $(, $layout: expr)*) => {
         match std::fs::read($path) {
             Ok(text) => {
-                $crate::macros::__get_shader_code($path, std::str::from_utf8(&text).unwrap(), $layout, ($($options)?).into(), std::env::current_dir().unwrap())
+                $crate::macros::__get_shader_code($path, std::str::from_utf8(&text).unwrap(), vec![$($layout.clone() ,)*], ($options).into(), std::env::current_dir().unwrap())
             },
             _ => Err(anyhow::anyhow!("failed to read shader code"))
         }
