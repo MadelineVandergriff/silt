@@ -39,43 +39,45 @@ pub fn get_command_pools(
 }
 
 impl CommandPool {
-    pub unsafe fn execute_one_time_commands<F, R>(&self, loader: &Loader, f: F) -> Result<R>
+    pub fn execute_one_time_commands<F, R>(&self, loader: &Loader, f: F) -> Result<R>
     where
         F: FnOnce(&Loader, vk::CommandBuffer) -> R,
     {
-        let command_buffer_create_info = vk::CommandBufferAllocateInfo::builder()
-            .level(vk::CommandBufferLevel::PRIMARY)
-            .command_pool(self.pool)
-            .command_buffer_count(1);
+        unsafe {
+            let command_buffer_create_info = vk::CommandBufferAllocateInfo::builder()
+                .level(vk::CommandBufferLevel::PRIMARY)
+                .command_pool(self.pool)
+                .command_buffer_count(1);
 
-        let command_buffer = loader
-            .device
-            .allocate_command_buffers(&command_buffer_create_info)?[0];
+            let command_buffer = loader
+                .device
+                .allocate_command_buffers(&command_buffer_create_info)?[0];
 
-        let begin_info = vk::CommandBufferBeginInfo::builder()
-            .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
-        loader
-            .device
-            .begin_command_buffer(command_buffer, &begin_info)?;
+            let begin_info = vk::CommandBufferBeginInfo::builder()
+                .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
+            loader
+                .device
+                .begin_command_buffer(command_buffer, &begin_info)?;
 
-        let ret = f(loader, command_buffer);
+            let ret = f(loader, command_buffer);
 
-        loader.device.end_command_buffer(command_buffer)?;
+            loader.device.end_command_buffer(command_buffer)?;
 
-        let submit_info =
-            vk::SubmitInfo::builder().command_buffers(std::slice::from_ref(&command_buffer));
+            let submit_info =
+                vk::SubmitInfo::builder().command_buffers(std::slice::from_ref(&command_buffer));
 
-        loader.device.queue_submit(
-            self.queue.queues[0],
-            std::slice::from_ref(&submit_info),
-            vk::Fence::null(),
-        )?;
-        loader.device.queue_wait_idle(self.queue.queues[0])?;
-        loader
-            .device
-            .free_command_buffers(self.pool, &[command_buffer]);
+            loader.device.queue_submit(
+                self.queue.queues[0],
+                std::slice::from_ref(&submit_info),
+                vk::Fence::null(),
+            )?;
+            loader.device.queue_wait_idle(self.queue.queues[0])?;
+            loader
+                .device
+                .free_command_buffers(self.pool, &[command_buffer]);
 
-        Ok(ret)
+            Ok(ret)
+        }
     }
 
     pub fn get_main_command_buffers(

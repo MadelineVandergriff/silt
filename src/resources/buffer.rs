@@ -1,4 +1,7 @@
-use std::{cell::{Cell, RefCell}, ops::Deref};
+use std::{
+    cell::{Cell, RefCell},
+    ops::Deref,
+};
 
 use crate::{
     material::{ResourceDescription, TypedResourceDescription},
@@ -66,101 +69,136 @@ impl Buffer {
             size: requirements.size,
         })
     }
-}
 
-pub unsafe fn copy_buffer(
-    loader: &Loader,
-    pool: &CommandPool,
-    src: &Buffer,
-    dst: &Buffer,
-    region: vk::BufferCopy,
-) -> Result<()> {
-    if region.size + region.src_offset > src.size {
-        return Err(anyhow!(
-            "region exceeded src bounds: [{:?}] [{:?}]",
-            region,
-            src
-        ));
+    pub fn copy_to_buffer(
+        &self,
+        loader: &Loader,
+        pool: &CommandPool,
+        dst: &Buffer,
+        region: vk::BufferCopy,
+    ) -> Result<()> {
+        if region.size + region.src_offset > self.size {
+            return Err(anyhow!(
+                "region exceeded src bounds: [{:?}] [{:?}]",
+                region,
+                self
+            ));
+        }
+
+        if region.size + region.dst_offset > dst.size {
+            return Err(anyhow!(
+                "region exceeded dst bounds: [{:?}] [{:?}]",
+                region,
+                dst
+            ));
+        }
+
+        pool.execute_one_time_commands(loader, |loader, cmd| unsafe {
+            loader.device.cmd_copy_buffer(
+                cmd,
+                self.buffer,
+                dst.buffer,
+                std::slice::from_ref(&region),
+            );
+        })
     }
 
-    if region.size + region.dst_offset > dst.size {
-        return Err(anyhow!(
-            "region exceeded dst bounds: [{:?}] [{:?}]",
-            region,
-            dst
-        ));
+    pub fn copy_to_entire_buffer(
+        &self,
+        loader: &Loader,
+        pool: &CommandPool,
+        dst: &Buffer,
+    ) -> Result<()> {
+        if self.size != dst.size {
+            return Err(anyhow!("src and dst mismatch: [{:?}] [{:?}]", self, dst));
+        }
+
+        let region = vk::BufferCopy::builder().size(self.size).build();
+        self.copy_to_buffer(loader, pool, dst, region)
     }
 
-    pool.execute_one_time_commands(loader, |loader, cmd| {
-        loader
-            .device
-            .cmd_copy_buffer(cmd, src.buffer, dst.buffer, std::slice::from_ref(&region));
-    })
-}
+    pub fn copy_to_image(
+        &self,
+        loader: &Loader,
+        pool: &CommandPool,
+        dst: &Image,
+        region: vk::BufferImageCopy,
+    ) -> Result<()> {
+        let region_volume = vk::Volume3D::from(region.image_extent).offset_by(region.image_offset);
+        if !vk::Volume3D::from(dst.size).contains(&region_volume) {
+            return Err(anyhow!(
+                "Region extents past image bounds: [{:?}] [{:?}]",
+                region,
+                dst
+            ));
+        }
 
-pub unsafe fn copy_entire_buffer(
-    loader: &Loader,
-    pool: &CommandPool,
-    src: &Buffer,
-    dst: &Buffer,
-) -> Result<()> {
-    if src.size != dst.size {
-        return Err(anyhow!("src and dst mismatch: [{:?}] [{:?}]", src, dst));
+        pool.execute_one_time_commands(loader, |loader, cmd| unsafe {
+            loader.device.cmd_copy_buffer_to_image(
+                cmd,
+                self.buffer,
+                dst.image,
+                vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                std::slice::from_ref(&region),
+            );
+        })
     }
 
-    let region = vk::BufferCopy::builder().size(src.size).build();
-    copy_buffer(loader, pool, src, dst, region)
-}
+    pub fn copy_to_entire_image(
+        &self,
+        loader: &Loader,
+        pool: &CommandPool,
+        dst: &Image,
+    ) -> Result<()> {
+        let region = vk::BufferImageCopy::builder()
+            .buffer_offset(0)
+            .buffer_row_length(0)
+            .buffer_image_height(0)
+            .image_subresource(
+                vk::ImageSubresourceLayers::builder()
+                    .aspect_mask(vk::ImageAspectFlags::COLOR)
+                    .mip_level(0)
+                    .base_array_layer(0)
+                    .layer_count(1)
+                    .build(),
+            )
+            .image_offset(vk::Offset3D::default())
+            .image_extent(dst.size);
 
-pub unsafe fn copy_buffer_to_image(
-    loader: &Loader,
-    pool: &CommandPool,
-    src: &Buffer,
-    dst: &Image,
-    region: vk::BufferImageCopy,
-) -> Result<()> {
-    let region_volume = vk::Volume3D::from(region.image_extent).offset_by(region.image_offset);
-    if !vk::Volume3D::from(dst.size).contains(&region_volume) {
-        return Err(anyhow!(
-            "Region extents past image bounds: [{:?}] [{:?}]",
-            region,
-            dst
-        ));
+        self.copy_to_image(loader, pool, dst, *region)
     }
 
-    pool.execute_one_time_commands(loader, |loader, cmd| {
-        loader.device.cmd_copy_buffer_to_image(
-            cmd,
-            src.buffer,
-            dst.image,
-            vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-            std::slice::from_ref(&region),
-        );
-    })
-}
+    pub fn upload_to_gpu<T: Copy>(
+        loader: &Loader,
+        pool: &CommandPool,
+        data: &[T],
+        usage: vk::BufferUsageFlags,
+        name: Option<&'static str>,
+    ) -> Result<Self> {
+        let staging_ci = BufferCreateInfo {
+            size: std::mem::size_of_val(data) as u64,
+            name: None,
+            usage: usage | vk::BufferUsageFlags::TRANSFER_SRC,
+            location: vk::MemoryLocation::CpuToGpu,
+        };
 
-pub unsafe fn copy_buffer_to_whole_image(
-    loader: &Loader,
-    pool: &CommandPool,
-    src: &Buffer,
-    dst: &Image,
-) -> Result<()> {
-    let region = vk::BufferImageCopy::builder()
-        .buffer_offset(0)
-        .buffer_row_length(0)
-        .buffer_image_height(0)
-        .image_subresource(
-            vk::ImageSubresourceLayers::builder()
-                .aspect_mask(vk::ImageAspectFlags::COLOR)
-                .mip_level(0)
-                .base_array_layer(0)
-                .layer_count(1)
-                .build(),
-        )
-        .image_offset(vk::Offset3D::default())
-        .image_extent(dst.size);
+        let staging = Self::new(loader, staging_ci)?;
+        unsafe { get_align(loader, &staging).copy_from_slice(data) };
 
-    copy_buffer_to_image(loader, pool, src, dst, *region)
+        let buffer_ci = BufferCreateInfo {
+            size: std::mem::size_of_val(data) as u64,
+            name,
+            usage: usage | vk::BufferUsageFlags::TRANSFER_DST,
+            location: vk::MemoryLocation::GpuOnly,
+        };
+
+        let buffer = Self::new(loader, buffer_ci)?;
+
+        staging.copy_to_entire_buffer(loader, pool, &buffer)?;
+        staging.destroy(loader);
+
+        Ok(buffer)
+    }
 }
 
 unsafe fn get_align<T: Copy>(loader: &Loader, buffer: &Buffer) -> Align<T> {
@@ -181,8 +219,8 @@ unsafe fn get_align<T: Copy>(loader: &Loader, buffer: &Buffer) -> Align<T> {
 }
 
 struct UniformBufferInternal<T> {
-    pub buffer: Buffer,
-    pub pointer: RefCell<Align<T>>,
+    buffer: Buffer,
+    pointer: RefCell<Align<T>>,
 }
 
 impl<T> Destructible for UniformBufferInternal<T> {
@@ -225,10 +263,10 @@ impl<T: Copy> UniformBuffer<T> {
     ) -> Result<Self> {
         let create_info = match description.deref() {
             ResourceDescription::Uniform {
-                binding,
                 stride,
                 elements,
                 host_visible,
+                ..
             } => BufferCreateInfo {
                 size: stride * *elements as u64,
                 name: Some("uniform buffer"),
@@ -251,13 +289,21 @@ impl<T: Copy> UniformBuffer<T> {
             buffers: ParitySet::from_fn(|| UniformBufferInternal::new(loader, create_info.clone()))
                 .into_iter()
                 .collect::<Result<_>>()?,
-            value: Cell::new(value)
+            value: Cell::new(value),
         })
+    }
+
+    pub fn get_buffers(&self) -> ParitySet<&Buffer> {
+        self.buffers.as_ref().map(|v| &v.buffer)
     }
 
     pub fn copy(&self, parity: Parity, value: T) {
         self.value.set(value);
-        self.buffers.get(parity).pointer.borrow_mut().copy_from_slice(&[value])
+        self.buffers
+            .get(parity)
+            .pointer
+            .borrow_mut()
+            .copy_from_slice(&[value])
     }
 
     pub fn update(&self, parity: Parity, f: impl FnOnce(&mut T)) {
