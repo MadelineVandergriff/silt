@@ -126,6 +126,15 @@ impl Image {
 }
 
 #[derive(Debug, Clone)]
+pub struct SwapchainImage {
+    pub image: vk::Image,
+    pub view: vk::ImageView,
+    pub format: vk::Format,
+    pub extent: vk::Extent3D,
+    pub samples: vk::SampleCountFlags,
+}
+
+#[derive(Debug, Clone)]
 pub struct SampledImage {
     pub image: Image,
     pub sampler: vk::Sampler,
