@@ -6,7 +6,7 @@ use std::{
 use crate::{
     material::{ResourceDescription, TypedResourceDescription},
     prelude::*,
-    storage::image::Image,
+    resources::Image,
     sync::CommandPool,
 };
 
@@ -198,6 +198,11 @@ impl Buffer {
         staging.destroy(loader);
 
         Ok(buffer)
+    }
+
+    /// DOES NOT DO ANY BOUNDS CHECKING
+    pub unsafe fn copy_data<T: Copy>(&self, loader: &Loader, data: &[T]) {
+        get_align(loader, self).copy_from_slice(data);
     }
 }
 
