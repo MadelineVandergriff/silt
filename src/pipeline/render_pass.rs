@@ -115,10 +115,10 @@ pub fn create_render_pass<'a>(
 ) -> Result<RenderPass> {
     let (attachments, views, sizes, types): (Vec<_>, Vec<_>, Vec<_>, Vec<_>) = resources
         .into_iter()
-        .filter_map(|resource| match (resource.resource, resource.description) {
-            (Resource::Attachment(image), ResourceDescription::Attachment { ty, format }) => {
-                Some((
-                    vk::AttachmentDescription::builder()
+        .flat_map(|resource| match (resource.resource, resource.description) {
+            (Resource::Attachment(images), ResourceDescription::Attachment { ty, format }) => {
+                images.into_iter().map(|image| {
+                    (vk::AttachmentDescription::builder()
                         .format(image.format)
                         .samples(image.samples)
                         .load_op(ty.get_load_op())
@@ -130,10 +130,11 @@ pub fn create_render_pass<'a>(
                         .build(),
                     image.view,
                     image.size,
-                    ty,
-                ))
+                    ty)
+                })
+                .collect_vec()
             }
-            _ => None,
+            _ => vec![]
         })
         .multiunzip();
 

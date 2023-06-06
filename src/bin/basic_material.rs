@@ -1,12 +1,12 @@
 use memoffset::offset_of;
-use silt::loader::LoaderCreateInfo;
+use silt::loader::{LoaderCreateInfo, LoaderHandles};
 use silt::material::{ResourceDescription, ShaderOptions, MaterialSystem, MaterialSkeleton};
 use silt::resources::UniformBuffer;
-use silt::{prelude::*, resources};
-use silt::properties::{DeviceFeaturesRequest, DeviceFeatures};
-use silt::shader;
+use silt::{prelude::*, resources, sampled_image};
+use silt::properties::{DeviceFeaturesRequest, DeviceFeatures, ProvidedFeatures};
+use silt::{shader, uniform_buffer};
 use silt::storage::descriptors::{ShaderBinding, DescriptorFrequency, VertexInput};
-use silt::storage::image::ImageCreateInfo;
+use silt::resources::ImageCreateInfo;
 use anyhow::Result;
 use silt::sync::{QueueRequest, QueueType};
 
@@ -71,9 +71,14 @@ fn main() -> Result<()> {
         ],
     };
 
-    let (loader, _) = Loader::new(loader_ci)?;
+    let (loader, LoaderHandles { debug_messenger, surface, pdevice, queues }) = Loader::new(loader_ci)?;
+    let features = ProvidedFeatures::new(&loader, pdevice);
 
-    let mvp_buffer = UniformBuffer::new(&loader, &mvp, MVP::default());
+    //let mvp_buffer = UniformBuffer::new(&loader, &mvp, MVP::default())?;
+    uniform_buffer!(mvp_buffer, loader, mvp, MVP::default());
+
+    let image_ci = ImageCreateInfo::default();
+    sampled_image!(texture_image, loader, texture, image_ci, features);
 
     let mut material_system = MaterialSystem::new(&loader);
     let model_loading = material_system.register_effect([vertex_shader, fragment_shader])?;

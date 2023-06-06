@@ -1,10 +1,10 @@
-use crate::{prelude::*, sync::CommandPool, properties::ProvidedFeatures};
+use crate::{prelude::*, properties::ProvidedFeatures, sync::CommandPool};
 use anyhow::Result;
 use cached::proc_macro::once;
 use itertools::Itertools;
 use std::cell::Cell;
 
-use super::{BufferCreateInfo, Buffer};
+use super::{Buffer, BufferCreateInfo};
 
 #[derive(Debug, Clone)]
 pub struct ImageCreateInfo {
@@ -388,6 +388,39 @@ impl Destructible for SampledImage {
     }
 }
 
+impl SampledImage {
+    pub fn new(
+        loader: &Loader,
+        create_info: ImageCreateInfo,
+        features: ProvidedFeatures,
+    ) -> Result<Self> {
+        let image = Image::new(loader, create_info)?;
+
+        let create_info = vk::SamplerCreateInfo::builder()
+            .mag_filter(vk::Filter::LINEAR)
+            .min_filter(vk::Filter::LINEAR)
+            .address_mode_u(vk::SamplerAddressMode::REPEAT)
+            .address_mode_v(vk::SamplerAddressMode::REPEAT)
+            .address_mode_w(vk::SamplerAddressMode::REPEAT)
+            .anisotropy_enable(features.sampler_anisotropy().is_some())
+            .max_anisotropy(features.sampler_anisotropy().unwrap_or_default())
+            .border_color(vk::BorderColor::FLOAT_OPAQUE_WHITE)
+            .compare_op(vk::CompareOp::ALWAYS)
+            .mipmap_mode(vk::SamplerMipmapMode::LINEAR)
+            .min_lod(0.)
+            .max_lod(image.mips as f32)
+            .build();
+
+        let sampler = unsafe { loader.device.create_sampler(&create_info, None)? };
+
+        Ok(Self {
+            image,
+            sampler,
+            properties: create_info,
+        })
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ImageFile {
     pub pixels: image::RgbaImage,
@@ -414,33 +447,40 @@ impl ImageFile {
         })
     }
 
-    pub fn upload_to_gpu(self, loader: &Loader, features: ProvidedFeatures, pool: &CommandPool) -> Result<Image> {
+    pub fn upload_to_gpu(
+        self,
+        loader: &Loader,
+        features: ProvidedFeatures,
+        pool: &CommandPool,
+    ) -> Result<Image> {
         let buffer_ci = BufferCreateInfo {
             size: self.size,
             name: None,
             usage: vk::BufferUsageFlags::TRANSFER_SRC,
             location: vk::MemoryLocation::CpuToGpu,
         };
-    
+
         let src_buffer = Buffer::new(loader, buffer_ci)?;
         unsafe { src_buffer.copy_data(loader, &self.pixels) };
-    
+
         let image_ci = ImageCreateInfo {
             width: self.width,
             height: self.height,
             mip_levels: self.max_mips,
-            usage: vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::TRANSFER_SRC | vk::ImageUsageFlags::SAMPLED,
+            usage: vk::ImageUsageFlags::TRANSFER_DST
+                | vk::ImageUsageFlags::TRANSFER_SRC
+                | vk::ImageUsageFlags::SAMPLED,
             view_aspect: vk::ImageAspectFlags::COLOR,
             name: Some("Texture Image"),
             ..Default::default()
         };
-    
+
         let image = Image::new(loader, image_ci)?;
         image.transition_layout(loader, pool, Layout::TransferDst)?;
         src_buffer.copy_to_entire_image(loader, pool, &image)?;
         image.generate_mipmaps(loader, pool);
         src_buffer.destroy(loader);
-    
+
         Ok(image)
     }
 }

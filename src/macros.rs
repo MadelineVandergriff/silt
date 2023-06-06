@@ -5,6 +5,7 @@ use shaderc::{CompileOptions, Compiler};
 use std::fs;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
+use paste::paste;
 
 use crate::material::{ShaderCode, ShaderOptions, ResourceDescription};
 use crate::prelude::shader_kind_to_shader_stage_flags;
@@ -22,6 +23,32 @@ macro_rules! shader {
                 $crate::macros::__get_shader_code($path, std::str::from_utf8(&text).unwrap(), vec![$($layout.clone() ,)*], ($options).into(), std::env::current_dir().unwrap())
             },
             _ => Err(anyhow::anyhow!("failed to read shader code"))
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! uniform_buffer {
+    ($name: ident, $loader: expr, $description: expr, $value: expr) => {
+        paste::paste! {
+            let $name = $crate::resources::UniformBuffer::new(&$loader, &$description, $value)?;
+            let [<$name _resource>] = $crate::material::CombinedResource {
+                resource: $crate::material::Resource::Uniform($name.get_buffers().into()),
+                description: std::clone::Clone::clone(&$description)
+            };
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! sampled_image {
+    ($name: ident, $loader: expr, $description: expr, $create_info: expr, $features: expr) => {
+        paste::paste! {
+            let $name = $crate::resources::SampledImage::new(&$loader, $create_info, $features)?;
+            let [<$name _resource>] = $crate::material::CombinedResource {
+                resource: $crate::material::Resource::SampledImage(&$name),
+                description: std::clone::Clone::clone(&$description)
+            };
         }
     };
 }

@@ -1,9 +1,13 @@
 use crate::{
     prelude::*,
     storage::{
-        descriptors::{build_layout, DescriptorFrequency, Layouts, ShaderBinding, VertexInput},
-        image::{AttachmentType, ImageCreateInfo, SampledImage, Image}, buffer::Buffer,
+        descriptors::{build_layout, DescriptorFrequency, Layouts, ShaderBinding, VertexInput}, image::AttachmentType,
     }, loader,
+    resources::{
+        Buffer,
+        Image,
+        SampledImage, RedundantSet
+    }
 };
 use anyhow::{anyhow, Result};
 use bitflags::bitflags;
@@ -121,7 +125,6 @@ pub enum ResourceDescription {
     },
     SampledImage {
         binding: ShaderBinding,
-        layout: vk::ImageLayout,
     },
     VertexInput {
         bindings: Vec<vk::VertexInputBindingDescription>,
@@ -194,15 +197,14 @@ impl ResourceDescription {
                 binding,
                 count: 1,
             },
-            layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
         }
     }
 }
 
 pub enum Resource<'a> {
-    Uniform(&'a Buffer),
+    Uniform(RedundantSet<&'a Buffer>),
     SampledImage(&'a SampledImage),
-    Attachment(&'a Image),
+    Attachment(RedundantSet<&'a Image>),
 }
 
 pub struct CombinedResource<'a> {
