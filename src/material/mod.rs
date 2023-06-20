@@ -12,6 +12,8 @@ use crate::{
 use anyhow::{anyhow, Result};
 use bitflags::bitflags;
 use by_address::ByAddress;
+use itertools::Itertools;
+use shaderc::ShaderKind;
 use std::{collections::HashMap, rc::Rc, marker::PhantomData, ops::Deref};
 
 bitflags! {
@@ -63,6 +65,8 @@ pub struct MaterialSkeleton {
 
 pub struct MaterialSystem<'a> {
     loader: &'a Loader,
+    resources: HashMap<Identifier, ResourceDescription>,
+    shaders: HashMap<Identifier, ShaderCode>,
     pipelines: HashMap<ByAddress<Rc<ShaderEffect>>, Option<Pipeline>>,
 }
 
@@ -70,8 +74,79 @@ impl<'a> MaterialSystem<'a> {
     pub fn new(loader: &'a Loader) -> Self {
         Self {
             loader,
+            resources: Default::default(),
+            shaders: Default::default(),
             pipelines: Default::default()
         }
+    }
+
+    pub fn add_basic_uniform<T>(&mut self, id: Identifier, binding: u32, frequency: DescriptorFrequency) -> Result<TypedIdentifier<T>> {
+        let desc = ResourceDescription::Uniform {
+            binding: ShaderBinding {
+                ty: vk::DescriptorType::UNIFORM_BUFFER,
+                frequency,
+                binding,
+                count: 1,
+            },
+            stride: std::mem::size_of::<T>() as u64,
+            elements: 1,
+            host_visible: true,
+        };
+
+        if self.resources.insert(id.clone(), desc).is_some() {
+            return Err(anyhow!("Resource id {} already exists", id))
+        };
+
+        Ok(id.into())
+    }
+
+    pub fn add_basic_sampled_image(&mut self, id: Identifier, binding: u32, frequency: DescriptorFrequency) -> Result<Identifier> {
+        let desc = ResourceDescription::SampledImage {
+            binding: ShaderBinding {
+                ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+                frequency,
+                binding,
+                count: 1,
+            },
+        };
+
+        if self.resources.insert(id.clone(), desc).is_some() {
+            return Err(anyhow!("Resource id {} already exists", id))
+        };
+
+        Ok(id)
+    }
+
+    pub fn add_vertex_input<T: VertexInput>(&mut self, id: Identifier) -> Result<Identifier> {
+        let desc = T::resource_description();
+
+        if self.resources.insert(id.clone(), desc).is_some() {
+            return Err(anyhow!("Resource id {} already exists", id))
+        };
+
+        Ok(id)
+    }
+
+    pub fn add_shader(&mut self, id: Identifier, code: (Vec<u32>, ShaderKind), resources: impl IntoIterator<Item = Identifier>) -> Result<Identifier> {
+        let resources = resources
+            .into_iter()
+            .map(|id| {
+                self.resources.get(&id).map(std::clone::Clone::clone)
+            })
+            .collect::<Option<Vec<_>>>()
+            .ok_or(anyhow!("Identifier doesn't point to valid resource"))?;
+
+        let shader = ShaderCode {
+            code: code.0,
+            kind: shader_kind_to_shader_stage_flags(code.1),
+            resources,
+        };
+
+        if self.shaders.insert(id.clone(), shader).is_some() {
+            return Err(anyhow!("Resource id {} already exists", id))
+        };
+
+        Ok(id)
     }
 
     pub fn register_effect(
@@ -134,6 +209,29 @@ pub enum ResourceDescription {
         ty: AttachmentType,
         format: vk::Format,
     },
+}
+
+#[derive(Debug, Clone)]
+pub struct TypedIdentifier<T> {
+    inner: Identifier,
+    phantom: PhantomData<T>,
+}
+
+impl<T> Deref for TypedIdentifier<T> {
+    type Target = Identifier;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+impl<T> From<Identifier> for TypedIdentifier<T> {
+    fn from(inner: Identifier) -> Self {
+        Self {
+            inner,
+            phantom: PhantomData
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

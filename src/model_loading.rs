@@ -1,3 +1,4 @@
+use crate::compile;
 use crate::material::ShaderOptions;
 use crate::prelude::*;
 use crate::vk;
@@ -14,7 +15,6 @@ use winit::event::{Event, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
 use winit::window::{Window, WindowBuilder};
 use derive_more::*;
-use crate::shader;
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 use crate::vk::{
@@ -1033,7 +1033,7 @@ unsafe fn get_image_views(
 }
 
 unsafe fn get_shader_module(device: &Device, name: impl AsRef<str>) -> vk::ShaderModule {
-    let code: Vec<u32> = shader!(name.as_ref(), ShaderOptions::CACHE | ShaderOptions::HLSL).unwrap().code;
+    let code: Vec<u32> = compile!(name.as_ref(), ShaderOptions::CACHE | ShaderOptions::HLSL).unwrap().0;
     let shader_module_create_info = vk::ShaderModuleCreateInfo::builder().code(&code[..]);
 
     device

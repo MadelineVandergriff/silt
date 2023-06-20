@@ -1,25 +1,24 @@
 use anyhow::{anyhow, Result};
 use ash::util::read_spv;
 use once_cell::sync::Lazy;
-use shaderc::{CompileOptions, Compiler};
+use shaderc::{CompileOptions, Compiler, ShaderKind};
 use std::fs;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
 
-use crate::material::{ShaderCode, ShaderOptions, ResourceDescription};
-use crate::prelude::shader_kind_to_shader_stage_flags;
+use crate::material::{ShaderOptions};
 
 static SHADERC_COMPILER: Lazy<Compiler> = Lazy::new(|| Compiler::new().unwrap());
 
 #[macro_export]
-macro_rules! shader {
-    ($path: literal, $options: expr $(, $layout: expr)*) => {
-        $crate::macros::__get_shader_code($path, include_str!($path), vec![$($layout.clone() ,)*], ($options).into(), std::path::Path::new(file!()).parent().unwrap().into())
+macro_rules! compile {
+    ($path: literal, $options: expr) => {
+        $crate::macros::__get_shader_code($path, include_str!($path), ($options).into(), std::path::Path::new(file!()).parent().unwrap().into())
     };
-    ($path: expr, $options: expr $(, $layout: expr)*) => {
+    ($path: expr, $options: expr) => {
         match std::fs::read($path) {
             Ok(text) => {
-                $crate::macros::__get_shader_code($path, std::str::from_utf8(&text).unwrap(), vec![$($layout.clone() ,)*], ($options).into(), std::env::current_dir().unwrap())
+                $crate::macros::__get_shader_code($path, std::str::from_utf8(&text).unwrap(), ($options).into(), std::env::current_dir().unwrap())
             },
             _ => Err(anyhow::anyhow!("failed to read shader code"))
         }
@@ -55,11 +54,9 @@ macro_rules! sampled_image {
 pub fn __get_shader_code(
     path: &str,
     text: &str,
-    layout: impl Into<Vec<ResourceDescription>>,
     options: ShaderOptions,
     invocation_path: PathBuf,
-) -> Result<ShaderCode> {
-
+) -> Result<(Vec<u32>, ShaderKind)> {
     let cache_enabled = options.contains(ShaderOptions::CACHE) && cfg!(target_os = "linux");
     let compile_options = if options.contains(ShaderOptions::HLSL) {
         let mut options = CompileOptions::new().unwrap();
@@ -82,11 +79,7 @@ pub fn __get_shader_code(
         match (spirv_file, copy_text) {
             (Ok(ref mut spirv_file), Ok(copy_text)) if copy_text == text => {
                 let code = read_spv(spirv_file)?;
-                return Ok(ShaderCode {
-                    code,
-                    kind: shader_kind_to_shader_stage_flags(kind),
-                    resources: layout.into(),
-                });
+                return Ok((code, kind));
             }
             _ => (),
         }
@@ -101,11 +94,7 @@ pub fn __get_shader_code(
         fs::copy(invocation_path.join(path), copy_path)?;
     }
 
-    Ok(ShaderCode {
-        code,
-        kind: shader_kind_to_shader_stage_flags(kind),
-        resources: layout.into()
-    })
+    Ok((code, kind))
 }
 
 fn get_kind(path: &str) -> Option<shaderc::ShaderKind> {

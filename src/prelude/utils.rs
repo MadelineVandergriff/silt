@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{sync::Arc, fmt::Display};
 use shaderc::ShaderKind;
 use derive_more::{Deref, From, Into};
 use once_cell::sync::Lazy;
@@ -48,6 +48,12 @@ pub static NULL_ID: Lazy<Identifier> = Lazy::new(|| Identifier::new("undefined i
 impl AsRef<str> for Identifier {
     fn as_ref(&self) -> &str {
         &self.0
+    }
+}
+
+impl Display for Identifier {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
     }
 }
 
