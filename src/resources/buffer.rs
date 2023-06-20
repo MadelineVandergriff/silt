@@ -4,6 +4,7 @@ use std::{
 };
 
 use crate::{
+    id,
     material::{ResourceDescription, TypedResourceDescription},
     prelude::*,
     resources::Image,
@@ -28,10 +29,10 @@ impl Destructible for Buffer {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct BufferCreateInfo {
     pub size: vk::DeviceSize,
-    pub name: Option<&'static str>,
+    pub name: Identifier,
     pub usage: vk::BufferUsageFlags,
     pub location: vk::MemoryLocation,
 }
@@ -47,7 +48,7 @@ impl Buffer {
         let requirements = unsafe { loader.device.get_buffer_memory_requirements(buffer) };
 
         let allocation_create_info = vk::AllocationCreateInfo {
-            name: create_info.name.unwrap_or("UNNAMED BUFFER"),
+            name: create_info.name.as_str(),
             requirements,
             location: create_info.location,
             linear: true,
@@ -173,11 +174,11 @@ impl Buffer {
         pool: &CommandPool,
         data: &[T],
         usage: vk::BufferUsageFlags,
-        name: Option<&'static str>,
+        name: Identifier,
     ) -> Result<Self> {
         let staging_ci = BufferCreateInfo {
             size: std::mem::size_of_val(data) as u64,
-            name: None,
+            name: NULL_ID.clone(),
             usage: usage | vk::BufferUsageFlags::TRANSFER_SRC,
             location: vk::MemoryLocation::CpuToGpu,
         };
@@ -274,7 +275,7 @@ impl<T: Copy> UniformBuffer<T> {
                 ..
             } => BufferCreateInfo {
                 size: stride * *elements as u64,
-                name: Some("uniform buffer"),
+                name: id!("Uniform Buffer"),
                 usage: vk::BufferUsageFlags::UNIFORM_BUFFER,
                 location: if *host_visible {
                     vk::MemoryLocation::CpuToGpu

@@ -1,4 +1,4 @@
-use crate::{prelude::*, properties::ProvidedFeatures, sync::CommandPool};
+use crate::{prelude::*, properties::ProvidedFeatures, sync::CommandPool, id};
 use anyhow::Result;
 use cached::proc_macro::once;
 use itertools::Itertools;
@@ -17,7 +17,7 @@ pub struct ImageCreateInfo {
     pub location: vk::MemoryLocation,
     pub samples: vk::SampleCountFlags,
     pub view_aspect: vk::ImageAspectFlags,
-    pub name: Option<&'static str>,
+    pub name: Identifier,
 }
 
 impl Default for ImageCreateInfo {
@@ -32,7 +32,7 @@ impl Default for ImageCreateInfo {
             location: vk::MemoryLocation::GpuOnly,
             samples: vk::SampleCountFlags::from_raw(1),
             view_aspect: vk::ImageAspectFlags::COLOR,
-            name: None,
+            name: NULL_ID.clone(),
         }
     }
 }
@@ -140,7 +140,7 @@ impl Image {
         let requirements = unsafe { loader.device.get_image_memory_requirements(image) };
 
         let allocation_create_info = vk::AllocationCreateInfo {
-            name: create_info.name.unwrap_or("UNNAMED IMAGE"),
+            name: create_info.name.as_str(),
             requirements,
             location: create_info.location,
             linear: create_info.tiling == vk::ImageTiling::LINEAR,
@@ -455,7 +455,7 @@ impl ImageFile {
     ) -> Result<Image> {
         let buffer_ci = BufferCreateInfo {
             size: self.size,
-            name: None,
+            name: NULL_ID.clone(),
             usage: vk::BufferUsageFlags::TRANSFER_SRC,
             location: vk::MemoryLocation::CpuToGpu,
         };
@@ -471,7 +471,7 @@ impl ImageFile {
                 | vk::ImageUsageFlags::TRANSFER_SRC
                 | vk::ImageUsageFlags::SAMPLED,
             view_aspect: vk::ImageAspectFlags::COLOR,
-            name: Some("Texture Image"),
+            name: id!("Texture Image"),
             ..Default::default()
         };
 

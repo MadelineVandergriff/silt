@@ -5,7 +5,6 @@ use shaderc::{CompileOptions, Compiler};
 use std::fs;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
-use paste::paste;
 
 use crate::material::{ShaderCode, ShaderOptions, ResourceDescription};
 use crate::prelude::shader_kind_to_shader_stage_flags;
