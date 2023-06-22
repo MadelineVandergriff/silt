@@ -76,38 +76,38 @@ fn main() -> Result<()> {
     ) = Loader::new(loader_ci)?;
     let features = ProvidedFeatures::new(&loader, pdevice);
 
-    let mut material_system = MaterialSystem::new(&loader);
+    let mut materials = MaterialSystem::new(&loader);
 
-    let vertex = material_system.add_vertex_input::<Vertex>(id!("Vertex"))?;
-    let mvp = material_system.add_basic_uniform::<MVP>(id!("MVP Uniform"), 0, DescriptorFrequency::Global)?;
-    let texture = material_system.add_basic_sampled_image(id!("Texture Image"), 1, DescriptorFrequency::Global)?;
+    let vertex = materials.add_vertex_input::<Vertex>(id!("Vertex"))?;
+    let mvp = materials.add_basic_uniform::<MVP>(id!("MVP Uniform"), 0, DescriptorFrequency::Global)?;
+    let texture = materials.add_basic_sampled_image(id!("Texture Image"), 1, DescriptorFrequency::Global)?;
 
-    let vertex_shader = material_system.add_shader(
+    let vertex_shader = materials.add_shader(
         id!("MVP Vertex Pass"),
         compile!("../../assets/shaders/model_loading.vert", ShaderOptions::HLSL)?,
         [vertex.clone(), *mvp.clone()]
     )?;
 
-    let vertex_shader = material_system.add_shader(
+    let vertex_shader = materials.add_shader(
         id!("Unlit Texture Pass"),
         compile!("../../assets/shaders/model_loading.frag", ShaderOptions::HLSL)?,
         [texture.clone()]
     )?;
 
     //let mvp_buffer = UniformBuffer::new(&loader, &mvp, MVP::default())?;
-    uniform_buffer!(mvp_buffer, loader, mvp, MVP::default());
+    let mvp_buffer = materials.build_uniform(&mvp, Default::default())?;
 
     let image_ci = ImageCreateInfo::default();
     sampled_image!(texture_image, loader, texture, image_ci, features);
 
     
-    let model_loading = material_system.register_effect([vertex_shader, fragment_shader])?;
+    let model_loading = materials.register_effect([vertex_shader, fragment_shader])?;
 
     let skeleton = MaterialSkeleton {
         effects: vec![model_loading.clone()],
     };
 
-    let pipeline = material_system.build_pipeline(model_loading)?;
+    let pipeline = materials.build_pipeline(model_loading)?;
 
     Ok(())
 }

@@ -266,6 +266,7 @@ impl<T: Copy> UniformBuffer<T> {
         loader: &Loader,
         description: &TypedResourceDescription<T>,
         value: T,
+        name: Option<Identifier>
     ) -> Result<Self> {
         let create_info = match description.deref() {
             ResourceDescription::Uniform {
@@ -275,7 +276,7 @@ impl<T: Copy> UniformBuffer<T> {
                 ..
             } => BufferCreateInfo {
                 size: stride * *elements as u64,
-                name: id!("Uniform Buffer"),
+                name: name.unwrap_or_else(|| id!("Uniform Buffer")),
                 usage: vk::BufferUsageFlags::UNIFORM_BUFFER,
                 location: if *host_visible {
                     vk::MemoryLocation::CpuToGpu

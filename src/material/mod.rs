@@ -6,7 +6,7 @@ use crate::{
     resources::{
         Buffer,
         Image,
-        SampledImage, RedundantSet
+        SampledImage, RedundantSet, UniformBuffer
     }
 };
 use anyhow::{anyhow, Result};
@@ -15,6 +15,7 @@ use by_address::ByAddress;
 use itertools::Itertools;
 use shaderc::ShaderKind;
 use std::{collections::HashMap, rc::Rc, marker::PhantomData, ops::Deref};
+use derive_more::{IsVariant};
 
 bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -78,6 +79,10 @@ impl<'a> MaterialSystem<'a> {
             shaders: Default::default(),
             pipelines: Default::default()
         }
+    }
+
+    pub fn get_description(&self, id: &Identifier) -> Option<&ResourceDescription> {
+        self.resources.get(id)
     }
 
     pub fn add_basic_uniform<T>(&mut self, id: Identifier, binding: u32, frequency: DescriptorFrequency) -> Result<TypedIdentifier<T>> {
@@ -149,6 +154,21 @@ impl<'a> MaterialSystem<'a> {
         Ok(id)
     }
 
+    pub fn build_uniform<T: Copy>(&self, id: &TypedIdentifier<T>, value: T) -> Result<Resource<UniformBuffer<T>>> {
+        let desc = match self.get_description(id) {
+            None => return Err(anyhow!("Identifier {} does not point to a resource description", id.as_str())),
+            Some(desc) if !desc.is_uniform() => return Err(anyhow!("Identifier {} does not point to a uniform resource description", id.as_str())),
+            Some(desc) => desc.clone()
+        };
+
+        let buffer = UniformBuffer::new(self.loader, &desc.into(), value, Some(id.inner.clone()))?;
+
+        Ok(Resource {
+            resource: buffer,
+            id: id.inner.clone(),
+        })
+    }
+
     pub fn register_effect(
         &mut self,
         modules: impl Into<Vec<ShaderCode>>,
@@ -190,7 +210,7 @@ impl<'a> MaterialSystem<'a> {
 
 pub struct Material {}
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, IsVariant)]
 pub enum ResourceDescription {
     Uniform {
         binding: ShaderBinding,
@@ -299,13 +319,15 @@ impl ResourceDescription {
     }
 }
 
+/*
 pub enum Resource<'a> {
     Uniform(RedundantSet<&'a Buffer>),
     SampledImage(&'a SampledImage),
     Attachment(RedundantSet<&'a Image>),
 }
+*/
 
-pub struct CombinedResource<'a> {
-    pub resource: Resource<'a>,
-    pub description: ResourceDescription,
+pub struct Resource<T> {
+    pub resource: T,
+    pub id: Identifier,
 }

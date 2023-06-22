@@ -70,6 +70,6 @@ impl Identifier {
 #[macro_export]
 macro_rules! id {
     ($id: expr) => {
-        crate::prelude::Identifier::new($id)
+        $crate::prelude::Identifier::new($id)
     };
 }

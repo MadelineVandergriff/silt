@@ -4,7 +4,7 @@ use anyhow::{anyhow, Result};
 use itertools::{Itertools, any};
 
 use crate::loader::Loader;
-use crate::material::{CombinedResource, Resource, ResourceDescription, ShaderEffect};
+use crate::material::{Resource, Resource, ResourceDescription, ShaderEffect};
 use crate::prelude::*;
 use crate::properties::get_sample_counts;
 use crate::storage::image::{self, AttachmentReferenceType};
@@ -111,7 +111,7 @@ pub struct RenderPass {
 
 pub fn create_render_pass<'a>(
     loader: &Loader,
-    resources: impl IntoIterator<Item = CombinedResource<'a>>,
+    resources: impl IntoIterator<Item = Resource<'a>>,
 ) -> Result<RenderPass> {
     let (attachments, views, sizes, types): (Vec<_>, Vec<_>, Vec<_>, Vec<_>) = resources
         .into_iter()
