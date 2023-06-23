@@ -154,18 +154,18 @@ impl<'a> MaterialSystem<'a> {
         Ok(id)
     }
 
-    pub fn build_uniform<T: Copy>(&self, id: &TypedIdentifier<T>, value: T) -> Result<Resource<UniformBuffer<T>>> {
+    pub fn build_uniform<T: Copy>(&self, id: &TypedIdentifier<T>, value: T) -> Result<Named<UniformBuffer<T>>> {
         let desc = match self.get_description(id) {
             None => return Err(anyhow!("Identifier {} does not point to a resource description", id.as_str())),
             Some(desc) if !desc.is_uniform() => return Err(anyhow!("Identifier {} does not point to a uniform resource description", id.as_str())),
             Some(desc) => desc.clone()
         };
 
-        let buffer = UniformBuffer::new(self.loader, &desc.into(), value, Some(id.inner.clone()))?;
+        let buffer = UniformBuffer::new(self.loader, &desc.into(), value, Some(id.as_ref().clone()))?;
 
-        Ok(Resource {
-            resource: buffer,
-            id: id.inner.clone(),
+        Ok(Named {
+            inner: buffer,
+            id: id.as_ref().clone(),
         })
     }
 
@@ -229,29 +229,6 @@ pub enum ResourceDescription {
         ty: AttachmentType,
         format: vk::Format,
     },
-}
-
-#[derive(Debug, Clone)]
-pub struct TypedIdentifier<T> {
-    inner: Identifier,
-    phantom: PhantomData<T>,
-}
-
-impl<T> Deref for TypedIdentifier<T> {
-    type Target = Identifier;
-
-    fn deref(&self) -> &Self::Target {
-        &self.inner
-    }
-}
-
-impl<T> From<Identifier> for TypedIdentifier<T> {
-    fn from(inner: Identifier) -> Self {
-        Self {
-            inner,
-            phantom: PhantomData
-        }
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -326,8 +303,3 @@ pub enum Resource<'a> {
     Attachment(RedundantSet<&'a Image>),
 }
 */
-
-pub struct Resource<T> {
-    pub resource: T,
-    pub id: Identifier,
-}

@@ -4,7 +4,7 @@ use anyhow::{anyhow, Result};
 use itertools::{Itertools, any};
 
 use crate::loader::Loader;
-use crate::material::{Resource, Resource, ResourceDescription, ShaderEffect};
+use crate::material::{ResourceDescription, ShaderEffect};
 use crate::prelude::*;
 use crate::properties::get_sample_counts;
 use crate::storage::image::{self, AttachmentReferenceType};
@@ -109,6 +109,7 @@ pub struct RenderPass {
     pub framebuffer: vk::Framebuffer,
 }
 
+/*
 pub fn create_render_pass<'a>(
     loader: &Loader,
     resources: impl IntoIterator<Item = Resource<'a>>,
@@ -246,3 +247,4 @@ pub fn create_render_pass<'a>(
         framebuffer
     })
 }
+*/

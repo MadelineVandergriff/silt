@@ -1,7 +1,4 @@
-use std::{sync::Arc, fmt::Display};
 use shaderc::ShaderKind;
-use derive_more::{Deref, From, Into};
-use once_cell::sync::Lazy;
 
 use crate::vk;
 
@@ -37,39 +34,4 @@ pub fn shader_kind_to_shader_stage_flags(kind: ShaderKind) -> vk::ShaderStageFla
         ShaderKind::DefaultMesh => vk::ShaderStageFlags::MESH_EXT,
         _ => panic!("Unknown shader kind")
     }
-}
-
-#[derive(Debug, Clone, Hash, PartialEq, Eq, Deref, From, Into)]
-#[deref(forward)]
-pub struct Identifier(Arc<str>);
-
-pub static NULL_ID: Lazy<Identifier> = Lazy::new(|| Identifier::new("undefined id"));
-
-impl AsRef<str> for Identifier {
-    fn as_ref(&self) -> &str {
-        &self.0
-    }
-}
-
-impl Display for Identifier {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
-impl Identifier {
-    pub fn new(id: impl AsRef<str>) -> Self {
-        Self(Arc::from(id.as_ref()))
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self
-    }
-}
-
-#[macro_export]
-macro_rules! id {
-    ($id: expr) => {
-        $crate::prelude::Identifier::new($id)
-    };
 }
