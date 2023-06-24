@@ -2,10 +2,10 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 
 use itertools::Itertools;
-use silt::material::ShaderOptions;
+use silt::material::{ShaderOptions, ShaderCode};
 use silt::model::{Model, Vertex, MVP};
 use silt::pipeline::{FragmentShader, Shaders, VertexShader};
-use silt::prelude::*;
+use silt::{prelude::*, compile};
 use silt::properties::{DeviceFeatures, DeviceFeaturesRequest, ProvidedFeatures};
 use silt::resources::{ParitySet, Parity};
 use silt::storage::buffer::get_bound_buffer;
@@ -16,7 +16,7 @@ use silt::storage::image::{upload_texture, ImageFile, SampledImage};
 use silt::sync::{
     get_command_pools, get_sync_primitives, QueueHandle, QueueRequest, QueueType, SyncPrimitives, Recordable,
 };
-use silt::{bindable, shader};
+use silt::{bindable};
 use silt::{loader::*, swapchain::Swapchain};
 use silt::{pipeline, storage::descriptors};
 
@@ -66,13 +66,26 @@ fn main() -> Result<()> {
             loader_ci.height,
         )?)
     };
+
+
+    let vertex_code = compile!("../assets/shaders/model_loading.vert", ShaderOptions::HLSL)?;
     let vertex = VertexShader::new::<Vertex, MVP>(
         &loader,
-        shader!("../assets/shaders/model_loading.vert", ShaderOptions::HLSL)?,
+        ShaderCode {
+            code: vertex_code.0,
+            kind: shader_kind_to_shader_stage_flags(vertex_code.1),
+            resources: vec![],
+        }
     )?;
+
+    let fragment_code = compile!("../assets/shaders/model_loading.frag", ShaderOptions::HLSL)?;
     let fragment = FragmentShader::new::<Texture>(
         &loader,
-        shader!("../assets/shaders/model_loading.frag", ShaderOptions::HLSL)?,
+        ShaderCode {
+            code: fragment_code.0,
+            kind: shader_kind_to_shader_stage_flags(fragment_code.1),
+            resources: vec![],
+        }
     )?;
     let shaders = Shaders { vertex, fragment };
     let layouts = descriptors::get_layouts(&loader, &[&shaders.vertex, &shaders.fragment])?;

@@ -1,21 +1,19 @@
 use crate::{
+    loader,
     prelude::*,
+    resources::{Buffer, Image, RedundantSet, SampledImage, UniformBuffer},
     storage::{
-        descriptors::{build_layout, DescriptorFrequency, Layouts, ShaderBinding, VertexInput}, image::AttachmentType,
-    }, loader,
-    resources::{
-        Buffer,
-        Image,
-        SampledImage, RedundantSet, UniformBuffer
-    }
+        descriptors::{build_layout, DescriptorFrequency, Layouts, ShaderBinding, VertexInput},
+        image::AttachmentType,
+    }, id,
 };
 use anyhow::{anyhow, Result};
 use bitflags::bitflags;
 use by_address::ByAddress;
+use derive_more::{Constructor, Deref, From, IsVariant, Unwrap};
 use itertools::Itertools;
 use shaderc::ShaderKind;
-use std::{collections::HashMap, rc::Rc, marker::PhantomData, ops::Deref};
-use derive_more::{IsVariant};
+use std::{collections::HashMap, marker::PhantomData, ops::Deref, rc::Rc};
 
 bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -35,22 +33,22 @@ impl Into<ShaderOptions> for () {
 pub struct ShaderCode {
     pub code: Vec<u32>,
     pub kind: vk::ShaderStageFlags,
-    pub resources: Vec<ResourceDescription>,
+    pub resources: Vec<Rc<ResourceDescription>>,
 }
 
 #[derive(Debug, Clone)]
 pub struct ShaderEffect {
-    pub modules: Vec<ShaderCode>,
+    pub identifiers: Vec<Identifier>,
     pub layouts: Layouts,
 }
 
 impl ShaderEffect {
-    pub fn new(loader: &Loader, modules: impl Into<Vec<ShaderCode>>) -> Result<Self> {
-        let modules: Vec<_> = modules.into();
+    pub fn new<'a>(loader: &Loader, modules: impl IntoIterator<Item = (Identifier, &'a ShaderCode)>) -> Result<Self> {
+        let (identifiers, modules): (Vec<_>, Vec<_>) = modules.into_iter().unzip();
 
         Ok(Self {
-            layouts: build_layout(loader, &modules)?,
-            modules,
+            layouts: build_layout(loader, modules)?,
+            identifiers,
         })
     }
 }
@@ -77,7 +75,7 @@ impl<'a> MaterialSystem<'a> {
             loader,
             resources: Default::default(),
             shaders: Default::default(),
-            pipelines: Default::default()
+            pipelines: Default::default(),
         }
     }
 
@@ -85,95 +83,36 @@ impl<'a> MaterialSystem<'a> {
         self.resources.get(id)
     }
 
-    pub fn add_basic_uniform<T>(&mut self, id: Identifier, binding: u32, frequency: DescriptorFrequency) -> Result<TypedIdentifier<T>> {
-        let desc = ResourceDescription::Uniform {
-            binding: ShaderBinding {
-                ty: vk::DescriptorType::UNIFORM_BUFFER,
-                frequency,
-                binding,
-                count: 1,
-            },
-            stride: std::mem::size_of::<T>() as u64,
-            elements: 1,
-            host_visible: true,
-        };
-
-        if self.resources.insert(id.clone(), desc).is_some() {
-            return Err(anyhow!("Resource id {} already exists", id))
-        };
-
-        Ok(id.into())
-    }
-
-    pub fn add_basic_sampled_image(&mut self, id: Identifier, binding: u32, frequency: DescriptorFrequency) -> Result<Identifier> {
-        let desc = ResourceDescription::SampledImage {
-            binding: ShaderBinding {
-                ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-                frequency,
-                binding,
-                count: 1,
-            },
-        };
-
-        if self.resources.insert(id.clone(), desc).is_some() {
-            return Err(anyhow!("Resource id {} already exists", id))
-        };
-
-        Ok(id)
-    }
-
-    pub fn add_vertex_input<T: VertexInput>(&mut self, id: Identifier) -> Result<Identifier> {
-        let desc = T::resource_description();
-
-        if self.resources.insert(id.clone(), desc).is_some() {
-            return Err(anyhow!("Resource id {} already exists", id))
-        };
-
-        Ok(id)
-    }
-
-    pub fn add_shader(&mut self, id: Identifier, code: (Vec<u32>, ShaderKind), resources: impl IntoIterator<Item = Identifier>) -> Result<Identifier> {
-        let resources = resources
-            .into_iter()
-            .map(|id| {
-                self.resources.get(&id).map(std::clone::Clone::clone)
-            })
-            .collect::<Option<Vec<_>>>()
-            .ok_or(anyhow!("Identifier doesn't point to valid resource"))?;
-
+    pub fn add_shader(
+        &mut self,
+        id: Identifier,
+        code: (Vec<u32>, ShaderKind),
+        resources: impl IntoIterator<Item = Rc<ResourceDescription>>,
+    ) -> Result<Identifier> {
         let shader = ShaderCode {
             code: code.0,
             kind: shader_kind_to_shader_stage_flags(code.1),
-            resources,
+            resources: resources.into_iter().collect(),
         };
 
         if self.shaders.insert(id.clone(), shader).is_some() {
-            return Err(anyhow!("Resource id {} already exists", id))
+            return Err(anyhow!("Resource id {} already exists", id));
         };
 
         Ok(id)
-    }
-
-    pub fn build_uniform<T: Copy>(&self, id: &TypedIdentifier<T>, value: T) -> Result<Named<UniformBuffer<T>>> {
-        let desc = match self.get_description(id) {
-            None => return Err(anyhow!("Identifier {} does not point to a resource description", id.as_str())),
-            Some(desc) if !desc.is_uniform() => return Err(anyhow!("Identifier {} does not point to a uniform resource description", id.as_str())),
-            Some(desc) => desc.clone()
-        };
-
-        let buffer = UniformBuffer::new(self.loader, &desc.into(), value, Some(id.as_ref().clone()))?;
-
-        Ok(Named {
-            inner: buffer,
-            id: id.as_ref().clone(),
-        })
     }
 
     pub fn register_effect(
         &mut self,
-        modules: impl Into<Vec<ShaderCode>>,
+        identifiers: impl IntoIterator<Item = Identifier> + Clone,
     ) -> Result<Rc<ShaderEffect>> {
-        let effect = Rc::new(ShaderEffect::new(self.loader, modules)?);
+        let modules = identifiers
+            .clone()
+            .into_iter()
+            .map(|id| self.shaders.get(&id).ok_or_else(|| anyhow!("Identifier {} does not point to a valid shader", id)))
+            .collect::<Result<Vec<_>>>()?;
+
+        let effect = Rc::new(ShaderEffect::new(self.loader, std::iter::zip(identifiers, modules))?);
         match self.pipelines.insert(ByAddress(effect.clone()), None) {
             Some(_) => Err(anyhow!("Effect already registered")),
             None => Ok(effect),
@@ -210,68 +149,165 @@ impl<'a> MaterialSystem<'a> {
 
 pub struct Material {}
 
-#[derive(Debug, Clone, IsVariant)]
-pub enum ResourceDescription {
-    Uniform {
-        binding: ShaderBinding,
-        stride: vk::DeviceSize,
-        elements: usize,
-        host_visible: bool,
-    },
-    SampledImage {
-        binding: ShaderBinding,
-    },
-    VertexInput {
-        bindings: Vec<vk::VertexInputBindingDescription>,
-        attributes: Vec<vk::VertexInputAttributeDescription>,
-    },
-    Attachment {
-        ty: AttachmentType,
-        format: vk::Format,
-    },
+#[derive(Debug, Clone, PartialEq)]
+pub struct UniformDescription {
+    pub id: Identifier,
+    pub binding: ShaderBinding,
+    pub stride: vk::DeviceSize,
+    pub elements: usize,
+    pub host_visible: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SampledImageDescription {
+    pub id: Identifier,
+    pub binding: ShaderBinding,
 }
 
 #[derive(Debug, Clone)]
-pub struct TypedResourceDescription<T> {
-    inner: ResourceDescription,
-    phantom: PhantomData<T>
+pub struct VertexInputDescription {
+    pub id: Identifier,
+    pub bindings: Vec<vk::VertexInputBindingDescription>,
+    pub attributes: Vec<vk::VertexInputAttributeDescription>,
 }
 
-impl<T> Deref for TypedResourceDescription<T> {
-    type Target = ResourceDescription;
-
-    fn deref(&self) -> &Self::Target {
-        &self.inner
+// Why doesn't ash implement PartialEq for these structs????
+impl PartialEq for VertexInputDescription {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+            && self.bindings.len() == other.bindings.len()
+            && self.attributes.len() == other.attributes.len()
+            && std::iter::zip(&self.bindings, &other.bindings).all(|(a, b)| {
+                a.binding == b.binding && a.stride == b.stride && a.input_rate == b.input_rate
+            })
+            && std::iter::zip(&self.attributes, &other.attributes).all(|(a, b)| {
+                a.binding == b.binding
+                    && a.format == b.format
+                    && a.location == b.location
+                    && a.offset == b.offset
+            })
     }
 }
 
-impl<T> From<ResourceDescription> for TypedResourceDescription<T> {
-    fn from(inner: ResourceDescription) -> Self {
-        Self {
-            inner,
-            phantom: PhantomData
+#[derive(Debug, Clone, PartialEq)]
+pub struct AttachmentDescription {
+    pub id: Identifier,
+    pub ty: AttachmentType,
+    pub format: vk::Format,
+}
+
+#[derive(Debug, Clone, PartialEq, IsVariant, Unwrap, From)]
+pub enum ResourceDescription {
+    Uniform(UniformDescription),
+    SampledImage(SampledImageDescription),
+    VertexInput(VertexInputDescription),
+    Attachment(AttachmentDescription),
+}
+
+impl Identified for ResourceDescription {
+    fn id(&self) -> &Identifier {
+        match self {
+            Self::Uniform(desc) => &desc.id,
+            Self::SampledImage(desc) => &desc.id,
+            Self::VertexInput(desc) => &desc.id,
+            Self::Attachment(desc) => &desc.id,
         }
     }
+}
+
+#[derive(Debug, Clone, Deref)]
+pub struct TypedResourceDescription<T> {
+    #[deref(forward)]
+    inner: Rc<ResourceDescription>,
+    phantom: PhantomData<T>,
+}
+
+impl<T> TypedResourceDescription<T> {
+    pub fn bind<F, R>(&self, f: F) -> Resource<R>
+    where
+        F: FnOnce(&Self) -> R,
+    {
+        Resource {
+            resource: f(self),
+            description: self.inner.clone(),
+        }
+    }
+
+    pub fn bind_result<F, R, E>(&self, f: F) -> Result<Resource<R>, E>
+    where
+        F: FnOnce(&Self) -> Result<R, E>
+    {
+        Ok(Resource {
+            resource: f(self)?,
+            description: self.inner.clone(),
+        })
+    }
+}
+
+impl<T> From<Rc<ResourceDescription>> for TypedResourceDescription<T> {
+    fn from(inner: Rc<ResourceDescription>) -> Self {
+        Self {
+            inner,
+            phantom: PhantomData,
+        }
+    }
+}
+
+impl<T> From<TypedResourceDescription<T>> for Rc<ResourceDescription> {
+    fn from(description: TypedResourceDescription<T>) -> Self {
+        description.inner
+    }
+}
+
+pub trait Typed {
+    type Inner;
+}
+
+impl<T> Typed for TypedResourceDescription<T> {
+    type Inner = T;
 }
 
 impl ResourceDescription {
     pub fn get_shader_binding(&self) -> Option<&ShaderBinding> {
         match self {
-            Self::Uniform { binding, .. } => Some(binding),
-            Self::SampledImage { binding, .. } => Some(binding),
-            Self::Attachment { ty, .. } => {
-                match ty {
-                    AttachmentType::Input(binding) => Some(binding),
-                    AttachmentType::DepthInput(binding) => Some(binding),
-                    _ => None
-                }
+            Self::Uniform(desc) => Some(&desc.binding),
+            Self::SampledImage(desc) => Some(&desc.binding),
+            Self::Attachment(desc) => match &desc.ty {
+                AttachmentType::Input(binding) => Some(binding),
+                AttachmentType::DepthInput(binding) => Some(binding),
+                _ => None,
             },
             _ => None,
         }
     }
 
-    pub fn uniform<T>(binding: u32, frequency: DescriptorFrequency) -> TypedResourceDescription<T> {
-        Self::Uniform {
+    pub fn bind<F, R>(self: &Rc<Self>, f: F) -> Resource<R>
+    where
+        F: FnOnce(&Rc<Self>) -> R,
+    {
+        Resource {
+            resource: f(self),
+            description: self.clone(),
+        }
+    }
+
+    pub fn bind_result<F, R, E>(self: &Rc<Self>, f: F) -> Result<Resource<R>, E>
+    where
+        F: FnOnce(&Rc<Self>) -> Result<R, E>
+    {
+        Ok(Resource {
+            resource: f(self)?,
+            description: self.clone(),
+        })
+    }
+
+    pub fn uniform<T>(
+        id: Identifier,
+        binding: u32,
+        frequency: DescriptorFrequency,
+    ) -> TypedResourceDescription<T> {
+        Rc::new(Self::from(UniformDescription {
+            id,
             binding: ShaderBinding {
                 ty: vk::DescriptorType::UNIFORM_BUFFER,
                 frequency,
@@ -281,19 +317,48 @@ impl ResourceDescription {
             stride: std::mem::size_of::<T>() as u64,
             elements: 1,
             host_visible: true,
-        }.into()
+        }))
+        .into()
     }
 
-    pub fn sampled_image(binding: u32, frequency: DescriptorFrequency) -> Self {
-        Self::SampledImage {
-            binding: ShaderBinding {
-                ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-                frequency,
-                binding,
-                count: 1,
-            },
-        }
+    pub fn sampled_image(id: Identifier, binding: u32, frequency: DescriptorFrequency) -> Rc<Self> {
+        Rc::new(
+            SampledImageDescription {
+                id,
+                binding: ShaderBinding {
+                    ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+                    frequency,
+                    binding,
+                    count: 1,
+                },
+            }
+            .into(),
+        )
     }
+
+    pub fn vertex_input<T: VertexInput>(id: Identifier) -> Rc<Self> {
+        Rc::new(
+            VertexInputDescription {
+                id,
+                bindings: T::bindings(),
+                attributes: T::attributes(),
+            }
+            .into(),
+        )
+    }
+}
+
+#[macro_export]
+macro_rules! resources {
+    ($($desc: expr),*) => {
+        [$($desc.clone().into()),*]
+    };
+}
+
+#[derive(Debug, Clone, Constructor)]
+pub struct Resource<T> {
+    pub resource: T,
+    pub description: Rc<ResourceDescription>,
 }
 
 /*

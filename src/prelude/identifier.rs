@@ -45,6 +45,10 @@ pub struct Named<T> {
     pub id: Identifier
 }
 
+pub trait Identified {
+    fn id(&self) -> &Identifier;
+}
+
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Deref)]
 pub struct TypedIdentifier<T> {
     #[deref]

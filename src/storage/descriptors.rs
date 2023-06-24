@@ -340,8 +340,4 @@ where
 pub trait VertexInput {
     fn bindings() -> Vec<vk::VertexInputBindingDescription>;
     fn attributes() -> Vec<vk::VertexInputAttributeDescription>;
-
-    fn resource_description() -> ResourceDescription {
-        ResourceDescription::VertexInput { bindings: Self::bindings(), attributes: Self::attributes() }
-    }
 }

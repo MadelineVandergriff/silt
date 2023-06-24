@@ -2,13 +2,13 @@ use anyhow::Result;
 use memoffset::offset_of;
 use silt::loader::{LoaderCreateInfo, LoaderHandles};
 use silt::material::{MaterialSkeleton, MaterialSystem, ResourceDescription, ShaderOptions};
+use silt::prelude::*;
 use silt::properties::{DeviceFeatures, DeviceFeaturesRequest, ProvidedFeatures};
-use silt::resources::ImageCreateInfo;
 use silt::resources::UniformBuffer;
+use silt::resources::{ImageCreateInfo, SampledImage};
 use silt::storage::descriptors::{DescriptorFrequency, ShaderBinding, VertexInput};
 use silt::sync::{QueueRequest, QueueType};
-use silt::{prelude::*, resources, id};
-use silt::{compile};
+use silt::{compile, id, resources};
 
 struct Vertex {
     pos: glam::Vec3,
@@ -78,29 +78,44 @@ fn main() -> Result<()> {
 
     let mut materials = MaterialSystem::new(&loader);
 
-    let vertex = materials.add_vertex_input::<Vertex>(id!("Vertex"))?;
-    let mvp = materials.add_basic_uniform::<MVP>(id!("MVP Uniform"), 0, DescriptorFrequency::Global)?;
-    let texture = materials.add_basic_sampled_image(id!("Texture Image"), 1, DescriptorFrequency::Global)?;
+    let vertex = ResourceDescription::vertex_input::<Vertex>(id!("Pos/UV Vertex"));
+    let mvp =
+        ResourceDescription::uniform::<MVP>(id!("MVP Uniform"), 0, DescriptorFrequency::Global);
+    let texture =
+        ResourceDescription::sampled_image(id!("Texture Image"), 1, DescriptorFrequency::Global);
 
     let vertex_shader = materials.add_shader(
         id!("MVP Vertex Pass"),
-        compile!("../../assets/shaders/model_loading.vert", ShaderOptions::HLSL)?,
-        [vertex.clone(), *mvp.clone()]
+        compile!(
+            "../../assets/shaders/model_loading.vert",
+            ShaderOptions::HLSL
+        )?,
+        resources!(vertex, mvp),
     )?;
 
-    let vertex_shader = materials.add_shader(
+    let fragment_shader = materials.add_shader(
         id!("Unlit Texture Pass"),
-        compile!("../../assets/shaders/model_loading.frag", ShaderOptions::HLSL)?,
-        [texture.clone()]
+        compile!(
+            "../../assets/shaders/model_loading.frag",
+            ShaderOptions::HLSL
+        )?,
+        resources!(texture),
     )?;
 
-    //let mvp_buffer = UniformBuffer::new(&loader, &mvp, MVP::default())?;
-    let mvp_buffer = materials.build_uniform(&mvp, Default::default())?;
+    let mvp_buffer = mvp.bind_result(|description| {
+        UniformBuffer::new(
+            &loader,
+            description,
+            Default::default(),
+            Some(description.id().clone()),
+        )
+    })?;
 
-    let image_ci = ImageCreateInfo::default();
-    sampled_image!(texture_image, loader, texture, image_ci, features);
+    let texture_image = texture.bind_result(|_| {
+        let image_ci = ImageCreateInfo::default();
+        SampledImage::new(&loader, image_ci, features)
+    })?;
 
-    
     let model_loading = materials.register_effect([vertex_shader, fragment_shader])?;
 
     let skeleton = MaterialSkeleton {

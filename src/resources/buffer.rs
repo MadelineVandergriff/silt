@@ -5,7 +5,7 @@ use std::{
 
 use crate::{
     id,
-    material::{ResourceDescription, TypedResourceDescription},
+    material::{ResourceDescription, TypedResourceDescription, UniformDescription},
     prelude::*,
     resources::Image,
     sync::CommandPool,
@@ -269,12 +269,12 @@ impl<T: Copy> UniformBuffer<T> {
         name: Option<Identifier>
     ) -> Result<Self> {
         let create_info = match description.deref() {
-            ResourceDescription::Uniform {
+            ResourceDescription::Uniform(UniformDescription {
                 stride,
                 elements,
                 host_visible,
                 ..
-            } => BufferCreateInfo {
+            }) => BufferCreateInfo {
                 size: stride * *elements as u64,
                 name: name.unwrap_or_else(|| id!("Uniform Buffer")),
                 usage: vk::BufferUsageFlags::UNIFORM_BUFFER,

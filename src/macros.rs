@@ -25,32 +25,6 @@ macro_rules! compile {
     };
 }
 
-#[macro_export]
-macro_rules! uniform_buffer {
-    ($name: ident, $loader: expr, $description: expr, $value: expr) => {
-        paste::paste! {
-            let $name = $crate::resources::UniformBuffer::new(&$loader, &$description, $value)?;
-            let [<$name _resource>] = $crate::material::CombinedResource {
-                resource: $crate::material::Resource::Uniform($name.get_buffers().into()),
-                description: std::clone::Clone::clone(&$description)
-            };
-        }
-    };
-}
-
-#[macro_export]
-macro_rules! sampled_image {
-    ($name: ident, $loader: expr, $description: expr, $create_info: expr, $features: expr) => {
-        paste::paste! {
-            let $name = $crate::resources::SampledImage::new(&$loader, $create_info, $features)?;
-            let [<$name _resource>] = $crate::material::CombinedResource {
-                resource: $crate::material::Resource::SampledImage(&$name),
-                description: std::clone::Clone::clone(&$description)
-            };
-        }
-    };
-}
-
 pub fn __get_shader_code(
     path: &str,
     text: &str,
