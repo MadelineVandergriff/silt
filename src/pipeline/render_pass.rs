@@ -4,7 +4,7 @@ use anyhow::{anyhow, Result};
 use itertools::{Itertools, any};
 
 use crate::loader::Loader;
-use crate::material::{ResourceDescription, ShaderEffect};
+use crate::material::{ShaderEffect};
 use crate::prelude::*;
 use crate::properties::get_sample_counts;
 use crate::storage::image::{self, AttachmentReferenceType};

@@ -391,11 +391,9 @@ impl Destructible for SampledImage {
 impl SampledImage {
     pub fn new(
         loader: &Loader,
-        create_info: ImageCreateInfo,
+        image: Image,
         features: ProvidedFeatures,
     ) -> Result<Self> {
-        let image = Image::new(loader, create_info)?;
-
         let create_info = vk::SamplerCreateInfo::builder()
             .mag_filter(vk::Filter::LINEAR)
             .min_filter(vk::Filter::LINEAR)
@@ -452,7 +450,7 @@ impl ImageFile {
         loader: &Loader,
         features: ProvidedFeatures,
         pool: &CommandPool,
-    ) -> Result<Image> {
+    ) -> Result<SampledImage> {
         let buffer_ci = BufferCreateInfo {
             size: self.size,
             name: NULL_ID.clone(),
@@ -481,7 +479,7 @@ impl ImageFile {
         image.generate_mipmaps(loader, pool);
         src_buffer.destroy(loader);
 
-        Ok(image)
+        SampledImage::new(loader, image, features)
     }
 }
 
@@ -534,3 +532,4 @@ pub fn get_surface_format(
             .unwrap()
     }
 }
+

@@ -1,19 +1,11 @@
+use anyhow::{anyhow, Result};
 use std::{
     cell::{Cell, RefCell},
     ops::Deref,
 };
 
-use crate::{
-    id,
-    material::{ResourceDescription, TypedResourceDescription, UniformDescription},
-    prelude::*,
-    resources::Image,
-    sync::CommandPool,
-};
-
-use anyhow::{anyhow, Result};
-
-use super::{Parity, ParitySet};
+use super::{Parity, ParitySet, ResourceDescription, TypedResourceDescription, UniformDescription};
+use crate::{id, prelude::*, resources::Image, sync::CommandPool};
 
 #[derive(Clone, Debug)]
 pub struct Buffer {
@@ -266,7 +258,7 @@ impl<T: Copy> UniformBuffer<T> {
         loader: &Loader,
         description: &TypedResourceDescription<T>,
         value: T,
-        name: Option<Identifier>
+        name: Option<Identifier>,
     ) -> Result<Self> {
         let create_info = match description.deref() {
             ResourceDescription::Uniform(UniformDescription {

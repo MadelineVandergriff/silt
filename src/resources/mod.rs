@@ -1,6 +1,9 @@
 mod redundancy;
 pub use redundancy::*;
 
+mod descriptions;
+pub use descriptions::*;
+
 mod buffer;
 pub use buffer::*;
 

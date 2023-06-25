@@ -35,3 +35,7 @@ pub fn shader_kind_to_shader_stage_flags(kind: ShaderKind) -> vk::ShaderStageFla
         _ => panic!("Unknown shader kind")
     }
 }
+
+pub trait Typed {
+    type Inner;
+}

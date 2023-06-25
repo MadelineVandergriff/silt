@@ -15,6 +15,26 @@ impl Destructible for CommandPool {
     }
 }
 
+impl CommandPool {
+    pub fn new(
+        loader: &Loader,
+        queue: &QueueHandle,
+        flags: vk::CommandPoolCreateFlags,
+    ) -> Result<CommandPool> {
+        let pool_ci = vk::CommandPoolCreateInfo::builder()
+            .flags(flags)
+            .queue_family_index(queue.family);
+
+        let pool = unsafe { loader.device.create_command_pool(&pool_ci, None)? };
+
+        Ok(CommandPool {
+            pool,
+            queue: queue.clone(),
+            flags,
+        })
+    }
+}
+
 pub fn get_command_pools(
     loader: &Loader,
     queues: &[QueueHandle],

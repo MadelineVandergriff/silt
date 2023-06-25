@@ -1,4 +1,4 @@
-use crate::{material::{ShaderCode, ResourceDescription}, pipeline::Shader, prelude::*, resources::ParitySet};
+use crate::{material::ShaderCode, pipeline::Shader, prelude::*, resources::ParitySet};
 
 use anyhow::{anyhow, Result};
 use impl_trait_for_tuples::impl_for_tuples;
@@ -262,11 +262,29 @@ pub unsafe fn get_descriptors<'a>(
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct PartialShaderBinding {
+    pub frequency: DescriptorFrequency,
+    pub binding: u32,
+    pub count: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct ShaderBinding {
     pub ty: vk::DescriptorType,
     pub frequency: DescriptorFrequency,
     pub binding: u32,
     pub count: u32,
+}
+
+impl PartialShaderBinding {
+    pub fn as_binding(self) -> ShaderBinding {
+        ShaderBinding {
+            ty: Default::default(),
+            frequency: self.frequency,
+            binding: self.binding,
+            count: self.count,
+        }
+    }
 }
 
 pub fn build_layout<'a, S: 'a>(loader: &Loader, shaders: S) -> Result<Layouts>
@@ -275,11 +293,13 @@ where
 {
     let descriptors = shaders
         .into_iter()
-        .flat_map(|shader| std::iter::zip([shader.kind].into_iter().cycle(), shader.resources.clone()))
+        .flat_map(|shader| {
+            std::iter::zip([shader.kind].into_iter().cycle(), shader.resources.clone())
+        })
         .filter_map(|(stage, resource)| {
             resource
                 .get_shader_binding()
-                .map(|&binding| (stage, binding))
+                .map(|binding| (stage, binding))
         })
         .group_by(|(_, binding)| (binding.binding, binding.frequency))
         .into_iter()

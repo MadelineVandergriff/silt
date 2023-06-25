@@ -1,13 +1,13 @@
 use anyhow::Result;
 use memoffset::offset_of;
 use silt::loader::{LoaderCreateInfo, LoaderHandles};
-use silt::material::{MaterialSkeleton, MaterialSystem, ResourceDescription, ShaderOptions};
+use silt::material::{MaterialSkeleton, MaterialSystem, ShaderOptions};
 use silt::prelude::*;
 use silt::properties::{DeviceFeatures, DeviceFeaturesRequest, ProvidedFeatures};
-use silt::resources::UniformBuffer;
-use silt::resources::{ImageCreateInfo, SampledImage};
+use silt::resources::{UniformBuffer, ResourceDescription};
+use silt::resources::{ImageCreateInfo, ImageFile, SampledImage};
 use silt::storage::descriptors::{DescriptorFrequency, ShaderBinding, VertexInput};
-use silt::sync::{QueueRequest, QueueType};
+use silt::sync::{CommandPool, QueueRequest, QueueType};
 use silt::{compile, id, resources};
 
 struct Vertex {
@@ -75,6 +75,11 @@ fn main() -> Result<()> {
         },
     ) = Loader::new(loader_ci)?;
     let features = ProvidedFeatures::new(&loader, pdevice);
+    let pool = CommandPool::new(
+        &loader,
+        &queues[0],
+        vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER,
+    )?;
 
     let mut materials = MaterialSystem::new(&loader);
 
@@ -112,8 +117,7 @@ fn main() -> Result<()> {
     })?;
 
     let texture_image = texture.bind_result(|_| {
-        let image_ci = ImageCreateInfo::default();
-        SampledImage::new(&loader, image_ci, features)
+        ImageFile::new("assets/textures/viking_room.png")?.upload_to_gpu(&loader, features, &pool)
     })?;
 
     let model_loading = materials.register_effect([vertex_shader, fragment_shader])?;
