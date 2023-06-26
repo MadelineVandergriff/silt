@@ -1,3 +1,4 @@
+/*
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 
@@ -371,4 +372,10 @@ fn draw_frame(
 
 fn aspect_ratio(swapchain: &RefCell<Swapchain>) -> f32 {
     swapchain.borrow().extent.width as f32 / swapchain.borrow().extent.height as f32
+}
+*/
+
+// Leaving this here for reference
+fn main() {
+
 }

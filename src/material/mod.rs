@@ -5,6 +5,7 @@ use shaderc::ShaderKind;
 use std::{collections::HashMap, rc::Rc};
 
 use crate::{
+    pipeline::build_render_pass,
     prelude::*,
     resources::ResourceDescription,
     storage::descriptors::{build_layout, Layouts},
@@ -142,14 +143,16 @@ impl<'a> MaterialSystem<'a> {
         {
             Some(pipeline) => Ok(pipeline),
             unbuilt => {
-                *unbuilt = Some(Self::build_pipeline_uncached(effect));
+                *unbuilt = Some(Self::build_pipeline_uncached(self.loader, effect)?);
                 Ok(unbuilt.as_ref().unwrap())
             }
         }
     }
 
-    fn build_pipeline_uncached(effect: Rc<ShaderEffect>) -> Pipeline {
-        todo!()
+    fn build_pipeline_uncached(loader: &Loader, effect: Rc<ShaderEffect>) -> Result<Pipeline> {
+        let render_pass = build_render_pass(loader, effect.resources.iter().cloned())?;
+
+        Err(anyhow!("todo"))
     }
 }
 

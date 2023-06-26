@@ -261,7 +261,7 @@ pub unsafe fn get_descriptors<'a>(
     Ok((pool, sets))
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct PartialShaderBinding {
     pub frequency: DescriptorFrequency,
     pub binding: u32,

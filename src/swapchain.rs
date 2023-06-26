@@ -4,7 +4,7 @@ use itertools::{izip, Itertools};
 use crate::loader::Loader;
 use crate::prelude::*;
 use crate::properties::get_sample_counts;
-use crate::storage::image::{self, Image, ImageCreateInfo};
+use crate::resources::{Image, get_surface_format, ImageCreateInfo, get_depth_format};
 
 #[derive(Debug, Clone)]
 pub struct SwapFrame {
@@ -13,7 +13,7 @@ pub struct SwapFrame {
     pub framebuffer: vk::Framebuffer,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct Swapchain {
     pub swapchain: vk::SwapchainKHR,
     pub extent: vk::Extent2D,
@@ -35,7 +35,7 @@ impl Swapchain {
         let surface_capabilities = loader
             .surface
             .get_physical_device_surface_capabilities(pdevice, surface)?;
-        let surface_format = image::get_surface_format(loader, surface, pdevice);
+        let surface_format = get_surface_format(loader, surface, pdevice);
         let present_mode = loader
             .surface
             .get_physical_device_surface_present_modes(pdevice, surface)
@@ -121,9 +121,9 @@ impl Swapchain {
             ..Default::default()
         };
 
-        let color = image::create_image(loader, color_image_ci)?;
+        let color = Image::new(loader, color_image_ci)?;
 
-        let depth_format = image::get_depth_format(
+        let depth_format = get_depth_format(
             &loader.instance,
             pdevice
         )
@@ -140,7 +140,7 @@ impl Swapchain {
             ..Default::default()
         };
 
-        let depth = image::create_image(loader, depth_image_ci)?;
+        let depth = Image::new(loader, depth_image_ci)?;
 
         let framebuffers = image_views
             .iter()

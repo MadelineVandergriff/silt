@@ -48,15 +48,50 @@ impl PartialEq for VertexInputDescription {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, IsVariant, Unwrap)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, Unwrap)]
 pub enum AttachmentType {
     Color, DepthStencil, Input(PartialShaderBinding), Resolve
+}
+
+impl AttachmentType {
+    pub fn load_op(&self) -> vk::AttachmentLoadOp {
+        match self {
+            AttachmentType::Color => vk::AttachmentLoadOp::CLEAR,
+            AttachmentType::DepthStencil => vk::AttachmentLoadOp::CLEAR,
+            AttachmentType::Input(_) => vk::AttachmentLoadOp::LOAD,
+            AttachmentType::Resolve => vk::AttachmentLoadOp::DONT_CARE,
+        }
+    }
+
+    pub fn store_op(&self) -> vk::AttachmentStoreOp {
+        match self {
+            AttachmentType::Color => vk::AttachmentStoreOp::STORE,
+            AttachmentType::DepthStencil => vk::AttachmentStoreOp::STORE,
+            AttachmentType::Input(_) => vk::AttachmentStoreOp::DONT_CARE,
+            AttachmentType::Resolve => vk::AttachmentStoreOp::STORE,
+        }
+    }
+
+    pub fn stencil_load_op(&self, use_stencil: bool) -> vk::AttachmentLoadOp {
+        match self {
+            AttachmentType::DepthStencil if use_stencil => vk::AttachmentLoadOp::CLEAR,
+            _ => vk::AttachmentLoadOp::DONT_CARE
+        }
+    }
+
+    pub fn stencil_store_op(&self, use_stencil: bool) -> vk::AttachmentStoreOp {
+        match self {
+            AttachmentType::DepthStencil if use_stencil => vk::AttachmentStoreOp::STORE,
+            _ => vk::AttachmentStoreOp::DONT_CARE
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct AttachmentDescription {
     pub id: Identifier,
     pub ty: AttachmentType,
+    pub use_stencil: bool,
     pub format: vk::Format,
     pub samples: vk::SampleCountFlags,
     pub final_layout: vk::ImageLayout,
