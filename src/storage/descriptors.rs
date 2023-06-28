@@ -1,4 +1,4 @@
-use crate::{material::ShaderCode, pipeline::Shader, prelude::*, resources::ParitySet};
+use crate::{material::ShaderModule, pipeline::Shader, prelude::*, resources::ParitySet};
 
 use anyhow::{anyhow, Result};
 use impl_trait_for_tuples::impl_for_tuples;
@@ -289,12 +289,12 @@ impl PartialShaderBinding {
 
 pub fn build_layout<'a, S: 'a>(loader: &Loader, shaders: S) -> Result<Layouts>
 where
-    S: IntoIterator<Item = &'a ShaderCode>,
+    S: IntoIterator<Item = &'a ShaderModule>,
 {
     let descriptors = shaders
         .into_iter()
         .flat_map(|shader| {
-            std::iter::zip([shader.kind].into_iter().cycle(), shader.resources.clone())
+            std::iter::zip([shader.stage_flags].into_iter().cycle(), shader.resources.clone())
         })
         .filter_map(|(stage, resource)| {
             resource

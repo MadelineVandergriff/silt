@@ -39,3 +39,8 @@ pub fn shader_kind_to_shader_stage_flags(kind: ShaderKind) -> vk::ShaderStageFla
 pub trait Typed {
     type Inner;
 }
+
+pub struct ShaderCode {
+    pub code: Vec<u32>,
+    pub kind: ShaderKind
+}

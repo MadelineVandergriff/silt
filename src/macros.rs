@@ -7,6 +7,7 @@ use std::io::Cursor;
 use std::path::{Path, PathBuf};
 
 use crate::material::{ShaderOptions};
+use crate::prelude::ShaderCode;
 
 static SHADERC_COMPILER: Lazy<Compiler> = Lazy::new(|| Compiler::new().unwrap());
 
@@ -30,7 +31,7 @@ pub fn __get_shader_code(
     text: &str,
     options: ShaderOptions,
     invocation_path: PathBuf,
-) -> Result<(Vec<u32>, ShaderKind)> {
+) -> Result<crate::prelude::ShaderCode> {
     let cache_enabled = options.contains(ShaderOptions::CACHE) && cfg!(target_os = "linux");
     let compile_options = if options.contains(ShaderOptions::HLSL) {
         let mut options = CompileOptions::new().unwrap();
@@ -53,7 +54,9 @@ pub fn __get_shader_code(
         match (spirv_file, copy_text) {
             (Ok(ref mut spirv_file), Ok(copy_text)) if copy_text == text => {
                 let code = read_spv(spirv_file)?;
-                return Ok((code, kind));
+                return Ok(ShaderCode {
+                    code, kind
+                });
             }
             _ => (),
         }
@@ -68,7 +71,7 @@ pub fn __get_shader_code(
         fs::copy(invocation_path.join(path), copy_path)?;
     }
 
-    Ok((code, kind))
+    Ok(ShaderCode { code, kind })
 }
 
 fn get_kind(path: &str) -> Option<shaderc::ShaderKind> {

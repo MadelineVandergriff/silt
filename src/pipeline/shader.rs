@@ -1,4 +1,4 @@
-use crate::material::ShaderCode;
+use crate::material::ShaderModule;
 use crate::storage::descriptors::{BindableVec, BindingDescription};
 use crate::{loader::Loader, prelude::*};
 use anyhow::Result;

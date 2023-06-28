@@ -2,10 +2,10 @@ use anyhow::{anyhow, Result};
 use bitflags::bitflags;
 use by_address::ByAddress;
 use shaderc::ShaderKind;
-use std::{collections::HashMap, rc::Rc};
+use std::{collections::HashMap, rc::Rc, ops::Deref};
 
 use crate::{
-    pipeline::build_render_pass,
+    pipeline::{build_render_pass, build_pipeline},
     prelude::*,
     resources::ResourceDescription,
     storage::descriptors::{build_layout, Layouts},
@@ -26,9 +26,9 @@ impl Into<ShaderOptions> for () {
 }
 
 #[derive(Debug, Clone)]
-pub struct ShaderCode {
-    pub code: Vec<u32>,
-    pub kind: vk::ShaderStageFlags,
+pub struct ShaderModule {
+    pub module: vk::ShaderModule,
+    pub stage_flags: vk::ShaderStageFlags,
     pub resources: Vec<Rc<ResourceDescription>>,
 }
 
@@ -36,22 +36,28 @@ pub struct ShaderCode {
 pub struct ShaderEffect {
     pub resources: Vec<Rc<ResourceDescription>>,
     pub layouts: Layouts,
+    pub shaders: Vec<Identifier>
 }
 
 impl ShaderEffect {
     pub fn new<'a, I>(loader: &Loader, modules: I) -> Result<Self>
     where
-        I: IntoIterator<Item = &'a ShaderCode> + Clone + 'a,
+        I: IntoIterator<Item = (Identifier, &'a ShaderModule)> + Clone + 'a,
     {
         let resources = modules
             .clone()
             .into_iter()
-            .flat_map(|s| s.resources.iter().cloned())
+            .flat_map(|(_, s)| s.resources.iter().cloned())
             .collect();
+
+        let (shaders, modules) = modules
+            .into_iter()
+            .unzip::<_, _, Vec<_>, Vec<_>>();
 
         Ok(Self {
             layouts: build_layout(loader, modules)?,
             resources,
+            shaders
         })
     }
 }
@@ -68,7 +74,7 @@ pub struct MaterialSkeleton {
 pub struct MaterialSystem<'a> {
     loader: &'a Loader,
     resources: HashMap<Identifier, ResourceDescription>,
-    shaders: HashMap<Identifier, ShaderCode>,
+    shaders: HashMap<Identifier, ShaderModule>,
     pipelines: HashMap<ByAddress<Rc<ShaderEffect>>, Option<Pipeline>>,
 }
 
@@ -89,12 +95,21 @@ impl<'a> MaterialSystem<'a> {
     pub fn add_shader(
         &mut self,
         id: Identifier,
-        code: (Vec<u32>, ShaderKind),
+        code: ShaderCode,
         resources: impl IntoIterator<Item = Rc<ResourceDescription>>,
     ) -> Result<Identifier> {
-        let shader = ShaderCode {
-            code: code.0,
-            kind: shader_kind_to_shader_stage_flags(code.1),
+        let stage_flags = shader_kind_to_shader_stage_flags(code.kind);
+
+        let create_info = vk::ShaderModuleCreateInfo::builder()
+            .code(&code.code);
+
+        let module = unsafe {
+            self.loader.device.create_shader_module(&create_info, None)?
+        };
+
+        let shader = ShaderModule {
+            module,
+            stage_flags,
             resources: resources.into_iter().collect(),
         };
 
@@ -114,7 +129,8 @@ impl<'a> MaterialSystem<'a> {
             .into_iter()
             .map(|id| {
                 self.shaders
-                    .get(&id)
+                    .get_key_value(&id)
+                    .map(|(id, shader)| (id.clone(), shader))
                     .ok_or_else(|| anyhow!("Identifier {} does not point to a valid shader", id))
             })
             .collect::<Result<Vec<_>>>()?;
@@ -143,14 +159,18 @@ impl<'a> MaterialSystem<'a> {
         {
             Some(pipeline) => Ok(pipeline),
             unbuilt => {
-                *unbuilt = Some(Self::build_pipeline_uncached(self.loader, effect)?);
                 Ok(unbuilt.as_ref().unwrap())
             }
         }
     }
 
-    fn build_pipeline_uncached(loader: &Loader, effect: Rc<ShaderEffect>) -> Result<Pipeline> {
-        let render_pass = build_render_pass(loader, effect.resources.iter().cloned())?;
+    fn build_pipeline_uncached(&self, effect: Rc<ShaderEffect>) -> Result<Pipeline> {
+        let resources = effect.resources.iter().map(|resource| resource.deref());
+        let shaders = effect.shaders.iter()
+            .map(|id| self.shaders.get(id).unwrap());
+
+        let render_pass = build_render_pass(&self.loader, resources.clone())?;
+        let pipeline = build_pipeline(&self.loader, render_pass, &effect.layouts, resources.clone(), shaders)?;
 
         Err(anyhow!("todo"))
     }

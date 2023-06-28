@@ -1,9 +1,110 @@
-use std::ffi::CStr;
+use std::{ffi::CStr, ops::Deref};
 
-use crate::{prelude::*, storage::descriptors::Layouts, properties::get_sample_counts};
+use crate::{prelude::*, storage::descriptors::Layouts, properties::get_sample_counts, resources::ResourceDescription, material::ShaderModule};
+
+use anyhow::Result;
+use itertools::Itertools;
 
 use super::{Shaders, Shader};
-use anyhow::Result;
+
+pub fn build_pipeline<'a, R, T, S>(
+    loader: &Loader,
+    render_pass: vk::RenderPass,
+    layouts: &Layouts,
+    resources: R,
+    shaders: S
+) -> Result<vk::Pipeline> where
+R: IntoIterator<Item = T> + Clone,
+T: Deref<Target = ResourceDescription>,
+S: IntoIterator<Item = &'a ShaderModule> + 'a {
+    let shader_stages = shaders
+        .into_iter()
+        .map(|module| {
+            vk::PipelineShaderStageCreateInfo::builder()
+                .stage(module.stage_flags)
+                .module(module.module)
+                .name(unsafe{ CStr::from_bytes_with_nul_unchecked(b"main\0") })
+                .build()
+        })
+        .collect_vec();
+
+    let dynamic_states = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
+    let dynamic_state =
+        vk::PipelineDynamicStateCreateInfo::builder().dynamic_states(&dynamic_states);
+
+    let vertex_resource = resources.clone()
+        .into_iter()
+        .find(|resource| {
+            (*resource).deref().is_vertex_input()
+        })
+        .unwrap()
+        .clone()
+        .unwrap_vertex_input();
+
+    let vertex_input_state = vk::PipelineVertexInputStateCreateInfo::builder();
+        //.vertex_binding_descriptions(&binding_descriptions)
+        //.vertex_attribute_descriptions(&attribute_descriptions[..]);
+
+    let input_assembly_state = vk::PipelineInputAssemblyStateCreateInfo::builder()
+        .topology(vk::PrimitiveTopology::TRIANGLE_LIST)
+        .primitive_restart_enable(false);
+
+    let viewport_state = vk::PipelineViewportStateCreateInfo::builder()
+        .viewport_count(1)
+        .scissor_count(1);
+
+    let rasterization_state = vk::PipelineRasterizationStateCreateInfo::builder()
+        .depth_clamp_enable(false)
+        .rasterizer_discard_enable(false)
+        .polygon_mode(vk::PolygonMode::FILL)
+        .line_width(1.)
+        .cull_mode(vk::CullModeFlags::BACK)
+        .front_face(vk::FrontFace::CLOCKWISE)
+        .depth_bias_enable(false);
+
+    let multisample_state = vk::PipelineMultisampleStateCreateInfo::builder();
+        //.sample_shading_enable(true)
+        //.rasterization_samples(msaa_samples);
+
+    let color_blend_attachment_state = vk::PipelineColorBlendAttachmentState::builder()
+        .color_write_mask(vk::ColorComponentFlags::RGBA)
+        .blend_enable(false);
+
+    let color_blend_state = vk::PipelineColorBlendStateCreateInfo::builder()
+        .logic_op_enable(false)
+        .attachments(std::slice::from_ref(&color_blend_attachment_state));
+
+    let depth_stencil_state = vk::PipelineDepthStencilStateCreateInfo::builder()
+        .depth_test_enable(true)
+        .depth_write_enable(true)
+        .depth_compare_op(vk::CompareOp::LESS);
+
+    let pipeline_create_info = vk::GraphicsPipelineCreateInfo::builder()
+        .stages(&shader_stages)
+        .vertex_input_state(&vertex_input_state)
+        .input_assembly_state(&input_assembly_state)
+        .viewport_state(&viewport_state)
+        .rasterization_state(&rasterization_state)
+        .multisample_state(&multisample_state)
+        .color_blend_state(&color_blend_state)
+        .dynamic_state(&dynamic_state)
+        .depth_stencil_state(&depth_stencil_state)
+        .layout(layouts.pipeline)
+        .render_pass(render_pass)
+        .subpass(0);
+
+    let pipeline = unsafe { loader
+        .device
+        .create_graphics_pipelines(
+            vk::PipelineCache::null(),
+            std::slice::from_ref(&pipeline_create_info),
+            None,
+        )
+        .map_err(|e| e.1)?[0]
+    };
+
+    Ok(pipeline)
+}
 
 pub unsafe fn get_present_pipeline(
     loader: &Loader,
