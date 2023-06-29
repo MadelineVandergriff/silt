@@ -1,49 +1,77 @@
-use std::{ffi::CStr, ops::Deref};
-
-use crate::{prelude::*, storage::descriptors::Layouts, properties::get_sample_counts, resources::ResourceDescription, material::ShaderModule};
-
 use anyhow::Result;
 use itertools::Itertools;
+use std::{ffi::CStr, ops::Deref};
 
-use super::{Shaders, Shader};
+use super::{Shader, Shaders};
+use crate::{
+    material::ShaderModule,
+    prelude::*,
+    properties::get_sample_counts,
+    resources::{AttachmentType, ResourceDescription, VertexInputDescription},
+    storage::descriptors::Layouts,
+};
+
+#[derive(Debug, Default)]
+struct PipelineResourceState {
+    vertex_state: Option<VertexInputDescription>,
+    multisample_state: Option<vk::SampleCountFlags>,
+    depth_stencil_state: Option<()>,
+}
 
 pub fn build_pipeline<'a, R, T, S>(
     loader: &Loader,
     render_pass: vk::RenderPass,
     layouts: &Layouts,
     resources: R,
-    shaders: S
-) -> Result<vk::Pipeline> where
-R: IntoIterator<Item = T> + Clone,
-T: Deref<Target = ResourceDescription>,
-S: IntoIterator<Item = &'a ShaderModule> + 'a {
+    shaders: S,
+) -> Result<vk::Pipeline>
+where
+    R: IntoIterator<Item = T> + Clone,
+    T: Deref<Target = ResourceDescription>,
+    S: IntoIterator<Item = &'a ShaderModule> + 'a,
+{
     let shader_stages = shaders
         .into_iter()
         .map(|module| {
             vk::PipelineShaderStageCreateInfo::builder()
                 .stage(module.stage_flags)
                 .module(module.module)
-                .name(unsafe{ CStr::from_bytes_with_nul_unchecked(b"main\0") })
+                .name(unsafe { CStr::from_bytes_with_nul_unchecked(b"main\0") })
                 .build()
         })
         .collect_vec();
+
+    let resource_state =
+        resources
+            .into_iter()
+            .fold(PipelineResourceState::default(), |mut acc, resource: T| {
+                match resource.deref() {
+                    ResourceDescription::VertexInput(vertex) => {
+                        acc.vertex_state = Some(vertex.clone());
+                    }
+                    ResourceDescription::Attachment(attachment)
+                        if attachment.ty == AttachmentType::Resolve =>
+                    {
+                        acc.multisample_state = Some(attachment.samples);
+                    }
+                    ResourceDescription::Attachment(attachment)
+                        if attachment.ty == AttachmentType::DepthStencil =>
+                    {
+                        acc.depth_stencil_state = Some(());
+                    }
+                    _ => (),
+                }
+
+                acc
+            });
 
     let dynamic_states = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
     let dynamic_state =
         vk::PipelineDynamicStateCreateInfo::builder().dynamic_states(&dynamic_states);
 
-    let vertex_resource = resources.clone()
-        .into_iter()
-        .find(|resource| {
-            (*resource).deref().is_vertex_input()
-        })
-        .unwrap()
-        .clone()
-        .unwrap_vertex_input();
-
-    let vertex_input_state = vk::PipelineVertexInputStateCreateInfo::builder();
-        //.vertex_binding_descriptions(&binding_descriptions)
-        //.vertex_attribute_descriptions(&attribute_descriptions[..]);
+    let vertex_input_state = vk::PipelineVertexInputStateCreateInfo::builder()
+        .vertex_binding_descriptions(&resource_state.vertex_state.as_ref().unwrap().bindings)
+        .vertex_attribute_descriptions(&resource_state.vertex_state.as_ref().unwrap().attributes);
 
     let input_assembly_state = vk::PipelineInputAssemblyStateCreateInfo::builder()
         .topology(vk::PrimitiveTopology::TRIANGLE_LIST)
@@ -62,9 +90,9 @@ S: IntoIterator<Item = &'a ShaderModule> + 'a {
         .front_face(vk::FrontFace::CLOCKWISE)
         .depth_bias_enable(false);
 
-    let multisample_state = vk::PipelineMultisampleStateCreateInfo::builder();
-        //.sample_shading_enable(true)
-        //.rasterization_samples(msaa_samples);
+    let multisample_state = vk::PipelineMultisampleStateCreateInfo::builder()
+        .sample_shading_enable(resource_state.multisample_state.is_some())
+        .rasterization_samples(resource_state.multisample_state.unwrap_or_default());
 
     let color_blend_attachment_state = vk::PipelineColorBlendAttachmentState::builder()
         .color_write_mask(vk::ColorComponentFlags::RGBA)
@@ -75,8 +103,8 @@ S: IntoIterator<Item = &'a ShaderModule> + 'a {
         .attachments(std::slice::from_ref(&color_blend_attachment_state));
 
     let depth_stencil_state = vk::PipelineDepthStencilStateCreateInfo::builder()
-        .depth_test_enable(true)
-        .depth_write_enable(true)
+        .depth_test_enable(resource_state.depth_stencil_state.is_some())
+        .depth_write_enable(resource_state.depth_stencil_state.is_some())
         .depth_compare_op(vk::CompareOp::LESS);
 
     let pipeline_create_info = vk::GraphicsPipelineCreateInfo::builder()
@@ -93,14 +121,15 @@ S: IntoIterator<Item = &'a ShaderModule> + 'a {
         .render_pass(render_pass)
         .subpass(0);
 
-    let pipeline = unsafe { loader
-        .device
-        .create_graphics_pipelines(
-            vk::PipelineCache::null(),
-            std::slice::from_ref(&pipeline_create_info),
-            None,
-        )
-        .map_err(|e| e.1)?[0]
+    let pipeline = unsafe {
+        loader
+            .device
+            .create_graphics_pipelines(
+                vk::PipelineCache::null(),
+                std::slice::from_ref(&pipeline_create_info),
+                None,
+            )
+            .map_err(|e| e.1)?[0]
     };
 
     Ok(pipeline)

@@ -1,14 +1,11 @@
-use std::collections::HashMap;
+use anyhow::Result;
+use itertools::Itertools;
 use std::ops::Deref;
 
-use anyhow::{anyhow, Result};
-use itertools::{any, Itertools};
-
 use crate::loader::Loader;
-use crate::material::ShaderEffect;
 use crate::prelude::*;
 use crate::properties::get_sample_counts;
-use crate::resources::{AttachmentType, ResourceDescription, get_surface_format, get_depth_format};
+use crate::resources::{get_depth_format, get_surface_format, AttachmentType, ResourceDescription};
 
 pub unsafe fn get_present_pass(
     loader: &Loader,

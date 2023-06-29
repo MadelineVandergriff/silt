@@ -2,10 +2,10 @@ use anyhow::{anyhow, Result};
 use bitflags::bitflags;
 use by_address::ByAddress;
 use shaderc::ShaderKind;
-use std::{collections::HashMap, rc::Rc, ops::Deref};
+use std::{collections::HashMap, ops::Deref, rc::Rc};
 
 use crate::{
-    pipeline::{build_render_pass, build_pipeline},
+    pipeline::{build_pipeline, build_render_pass},
     prelude::*,
     resources::ResourceDescription,
     storage::descriptors::{build_layout, Layouts},
@@ -36,7 +36,7 @@ pub struct ShaderModule {
 pub struct ShaderEffect {
     pub resources: Vec<Rc<ResourceDescription>>,
     pub layouts: Layouts,
-    pub shaders: Vec<Identifier>
+    pub shaders: Vec<Identifier>,
 }
 
 impl ShaderEffect {
@@ -50,14 +50,12 @@ impl ShaderEffect {
             .flat_map(|(_, s)| s.resources.iter().cloned())
             .collect();
 
-        let (shaders, modules) = modules
-            .into_iter()
-            .unzip::<_, _, Vec<_>, Vec<_>>();
+        let (shaders, modules) = modules.into_iter().unzip::<_, _, Vec<_>, Vec<_>>();
 
         Ok(Self {
             layouts: build_layout(loader, modules)?,
             resources,
-            shaders
+            shaders,
         })
     }
 }
@@ -75,7 +73,7 @@ pub struct MaterialSystem<'a> {
     loader: &'a Loader,
     resources: HashMap<Identifier, ResourceDescription>,
     shaders: HashMap<Identifier, ShaderModule>,
-    pipelines: HashMap<ByAddress<Rc<ShaderEffect>>, Option<Pipeline>>,
+    pipelines: HashMap<ByAddress<Rc<ShaderEffect>>, Pipeline>,
 }
 
 impl<'a> MaterialSystem<'a> {
@@ -100,11 +98,12 @@ impl<'a> MaterialSystem<'a> {
     ) -> Result<Identifier> {
         let stage_flags = shader_kind_to_shader_stage_flags(code.kind);
 
-        let create_info = vk::ShaderModuleCreateInfo::builder()
-            .code(&code.code);
+        let create_info = vk::ShaderModuleCreateInfo::builder().code(&code.code);
 
         let module = unsafe {
-            self.loader.device.create_shader_module(&create_info, None)?
+            self.loader
+                .device
+                .create_shader_module(&create_info, None)?
         };
 
         let shader = ShaderModule {
@@ -135,11 +134,7 @@ impl<'a> MaterialSystem<'a> {
             })
             .collect::<Result<Vec<_>>>()?;
 
-        let effect = Rc::new(ShaderEffect::new(self.loader, modules)?);
-        match self.pipelines.insert(ByAddress(effect.clone()), None) {
-            Some(_) => Err(anyhow!("Effect already registered")),
-            None => Ok(effect),
-        }
+        Ok(Rc::new(ShaderEffect::new(self.loader, modules)?))
     }
 
     pub fn build_material(&mut self, skeleton: MaterialSkeleton) -> Result<Material> {
@@ -152,25 +147,27 @@ impl<'a> MaterialSystem<'a> {
     }
 
     pub fn build_pipeline(&mut self, effect: Rc<ShaderEffect>) -> Result<&Pipeline> {
-        match self
-            .pipelines
-            .get_mut(&ByAddress(effect.clone()))
-            .ok_or(anyhow!("Unknown effect"))?
-        {
-            Some(pipeline) => Ok(pipeline),
-            unbuilt => {
-                Ok(unbuilt.as_ref().unwrap())
-            }
-        }
+        let key = ByAddress(effect.clone());
+        let pipeline = self.build_pipeline_uncached(effect)?;
+        self.pipelines.insert(key.clone(), pipeline);
+        Ok(self.pipelines.get(&key).unwrap())
     }
 
     fn build_pipeline_uncached(&self, effect: Rc<ShaderEffect>) -> Result<Pipeline> {
         let resources = effect.resources.iter().map(|resource| resource.deref());
-        let shaders = effect.shaders.iter()
+        let shaders = effect
+            .shaders
+            .iter()
             .map(|id| self.shaders.get(id).unwrap());
 
         let render_pass = build_render_pass(&self.loader, resources.clone())?;
-        let pipeline = build_pipeline(&self.loader, render_pass, &effect.layouts, resources.clone(), shaders)?;
+        let pipeline = build_pipeline(
+            &self.loader,
+            render_pass,
+            &effect.layouts,
+            resources.clone(),
+            shaders,
+        )?;
 
         Err(anyhow!("todo"))
     }
