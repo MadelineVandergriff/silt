@@ -92,7 +92,7 @@ where
 
     let multisample_state = vk::PipelineMultisampleStateCreateInfo::builder()
         .sample_shading_enable(resource_state.multisample_state.is_some())
-        .rasterization_samples(resource_state.multisample_state.unwrap_or_default());
+        .rasterization_samples(resource_state.multisample_state.unwrap_or(vk::SampleCountFlags::TYPE_1));
 
     let color_blend_attachment_state = vk::PipelineColorBlendAttachmentState::builder()
         .color_write_mask(vk::ColorComponentFlags::RGBA)

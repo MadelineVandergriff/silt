@@ -12,6 +12,7 @@ use silt::{compile, id, resources};
 
 struct Vertex {
     pos: glam::Vec3,
+    color: glam::Vec3,
     uv: glam::Vec2,
 }
 
@@ -39,6 +40,12 @@ impl VertexInput for Vertex {
                 .location(0)
                 .format(vk::Format::R32G32B32_SFLOAT)
                 .offset(offset_of!(Vertex, pos) as u32)
+                .build(),
+            vk::VertexInputAttributeDescription::builder()
+                .binding(0)
+                .location(1)
+                .format(vk::Format::R32G32B32_SFLOAT)
+                .offset(offset_of!(Vertex, color) as u32)
                 .build(),
             vk::VertexInputAttributeDescription::builder()
                 .binding(0)

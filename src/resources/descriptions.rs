@@ -175,7 +175,7 @@ impl ResourceDescription {
             },
             Self::SampledImage(desc) => {
                 ShaderBinding {
-                    ty: vk::DescriptorType::UNIFORM_BUFFER,
+                    ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
                     ..desc.binding.as_binding()
                 }
             },

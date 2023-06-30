@@ -65,7 +65,7 @@ impl Layout {
 
     pub fn get_pipeline_stage(&self) -> vk::PipelineStageFlags {
         match self {
-            Layout::Initial => vk::PipelineStageFlags::NONE,
+            Layout::Initial => vk::PipelineStageFlags::TOP_OF_PIPE,
             Layout::TransferSrc => vk::PipelineStageFlags::TRANSFER,
             Layout::TransferDst => vk::PipelineStageFlags::TRANSFER,
             Layout::FragmentRead => vk::PipelineStageFlags::FRAGMENT_SHADER,

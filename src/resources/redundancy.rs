@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Result};
-use derive_more::{From, Index, IndexMut, Into, IntoIterator};
+use derive_more::{From, Index, IndexMut, Into, IntoIterator, IsVariant, Unwrap};
 use itertools::Itertools;
 use std::borrow::Borrow;
 
@@ -59,7 +59,7 @@ pub trait RedundancyType {
     }
 }
 
-#[derive(Debug, Clone, Into, From, Index, IndexMut, IntoIterator)]
+#[derive(Debug, Clone, Into, From, Index, IndexMut, PartialEq, Eq)]
 pub struct SwapSet<T>(Vec<T>);
 
 impl<T: Destructible> IterDestructible<T> for SwapSet<T> where SwapSet<T>: IntoIterator<Item = T> {}
@@ -71,6 +71,10 @@ impl<T> RedundancyType for SwapSet<T> {
 }
 
 impl<T> SwapSet<T> {
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
     pub fn iter(&self) -> std::slice::Iter<'_, T> {
         self.0.iter()
     }
@@ -80,7 +84,22 @@ impl<T> SwapSet<T> {
     }
 }
 
-#[derive(Clone, Copy, Hash, Debug)]
+impl<T> IntoIterator for SwapSet<T> {
+    type Item = T;
+    type IntoIter = std::vec::IntoIter<T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
+
+impl<T> FromIterator<T> for SwapSet<T> {
+    fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
+        iter.into_iter().collect_vec().into()
+    }
+}
+
+#[derive(Clone, Copy, Hash, Debug, PartialEq, Eq, IsVariant)]
 pub enum Parity {
     Even,
     Odd,
@@ -95,7 +114,7 @@ impl Parity {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ParitySet<T> {
     pub even: T,
     pub odd: T,
@@ -190,7 +209,7 @@ impl<T> FromIterator<T> for ParitySet<T> {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, IsVariant, Unwrap, PartialEq, Eq)]
 pub enum RedundantSet<T> {
     Single(T),
     Parity(ParitySet<T>),
@@ -226,18 +245,20 @@ impl<T> From<SwapSet<T>> for RedundantSet<T> {
 }
 
 impl<T> RedundantSet<T> {
-    pub fn as_type(&self, ty: Redundancy) -> Result<RedundantSet<&T>> {
+    pub fn as_type(&self, ty: Redundancy, swap_len: Option<usize>) -> Result<RedundantSet<&T>> {
         Ok(match (self, ty) {
             (Self::Single(value), Redundancy::Single) => value.into(),
             (Self::Single(value), Redundancy::Parity) => ParitySet::from_single(value).into(),
-            (Self::Single(value), Redundancy::Swapchain) => SwapSet::from(vec![value]).into(),
+            (Self::Single(value), Redundancy::Swapchain) => SwapSet::from(vec![value; swap_len.unwrap_or(1)]).into(),
             (Self::Parity(value), Redundancy::Parity) => value.as_ref().into(),
             (Self::Swapchain(value), Redundancy::Swapchain) => value.as_ref().into(),
-            _ => return Err(anyhow!(
-                "Redundant set of type {:?} not compatible with {:?}",
-                self.get_redundancy(),
-                ty
-            ))
+            _ => {
+                return Err(anyhow!(
+                    "Redundant set of type {:?} not compatible with {:?}",
+                    self.get_redundancy(),
+                    ty
+                ))
+            }
         })
     }
 
@@ -250,6 +271,25 @@ impl<T> RedundantSet<T> {
     }
 }
 
+impl<T: Clone> RedundantSet<T> {
+    pub fn into_type(self, ty: Redundancy, swap_len: Option<usize>) -> Result<RedundantSet<T>> {
+        Ok(match (self, ty) {
+            (Self::Single(value), Redundancy::Single) => value.into(),
+            (Self::Single(value), Redundancy::Parity) => ParitySet::from_single(value).into(),
+            (Self::Single(value), Redundancy::Swapchain) => SwapSet::from(vec![value; swap_len.unwrap_or(1)]).into(),
+            (Self::Parity(value), Redundancy::Parity) => value.into(),
+            (Self::Swapchain(value), Redundancy::Swapchain) => value.into(),
+            (_self, ty) => {
+                return Err(anyhow!(
+                    "Redundant set of type {:?} not compatible with {:?}",
+                    _self.get_redundancy(),
+                    ty
+                ))
+            }
+        })
+    }
+}
+
 impl<T> IntoIterator for RedundantSet<T> {
     type Item = T;
 
@@ -259,9 +299,218 @@ impl<T> IntoIterator for RedundantSet<T> {
         match self {
             Self::Single(value) => vec![value],
             Self::Parity(value) => value.into_iter().collect(),
-            Self::Swapchain(value) => value.into()
-        }.into_iter()
+            Self::Swapchain(value) => value.into(),
+        }
+        .into_iter()
     }
 }
 
 impl<T: Destructible> IterDestructible<T> for RedundantSet<T> {}
+
+/// Enable turning an iterator of redundant sets of T into a redundant set of iterators of T
+pub trait RedundancyTools: Iterator {
+    type Underlying;
+    type Iter: Iterator<Item = Self::Underlying>;
+    type Err;
+
+    fn merge_rsets(self) -> std::result::Result<RedundantSet<Self::Iter>, Self::Err>;
+}
+
+impl<T: Clone, I: Iterator<Item = RedundantSet<T>>> RedundancyTools for I {
+    type Underlying = T;
+    type Iter = std::vec::IntoIter<T>;
+    type Err = anyhow::Error;
+
+    fn merge_rsets(self) -> Result<RedundantSet<Self::Iter>> {
+        let (sets, redundancies, swap_lens): (Vec<_>, Vec<_>, Vec<_>) = self
+            .map(|set| {
+                let redundancy = Some(set.get_redundancy());
+                let swap_len = match &set {
+                    RedundantSet::Swapchain(s) => Some(s.len()),
+                    _ => None
+                };
+
+                (set, redundancy, swap_len)
+            })
+            .multiunzip();
+
+        let redundancy = redundancies
+            .into_iter()
+            .reduce(|a, b| a.and_then(|a| a.generalize(b.unwrap())))
+            .unwrap_or_default()
+            .ok_or(anyhow!("Failed to generalize redundancy"))?;
+
+        let swap_len = if redundancy == Redundancy::Swapchain {
+            swap_lens.into_iter()
+                .reduce(|a, b| match (a, b) {
+                    (None, None) => None,
+                    (None, Some(b)) => Some(b),
+                    (Some(a), None) => Some(a),
+                    (Some(a), Some(b)) => {
+                        assert_eq!(a, b, "SwapSets must be of equal length");
+                        Some(a)
+                    },
+                })
+                .unwrap_or_default()
+        } else {
+            None
+        };
+
+        let sets = sets
+            .into_iter()
+            .map(|set| set.into_type(redundancy, swap_len).unwrap())
+            .collect_vec();
+
+        Ok(match redundancy {
+            Redundancy::Single => RedundantSet::Single(
+                sets.into_iter()
+                    .map(RedundantSet::unwrap_single)
+                    .collect_vec()
+                    .into_iter(),
+            ),
+            Redundancy::Parity => {
+                let (evens, odds) = sets.into_iter()
+                    .map(RedundantSet::unwrap_parity)
+                    .map(|parity| parity.into_iter().collect_tuple().unwrap())
+                    .unzip::<_, _, Vec<_>, Vec<_>>();
+
+                ParitySet { even: evens.into_iter(), odd: odds.into_iter() }.into()
+            },
+            Redundancy::Swapchain => {
+                let mut elements = sets.into_iter()
+                    .map(RedundantSet::unwrap_swapchain)
+                    .map(|swap_set| swap_set.0)
+                    .collect::<Vec<_>>();
+
+                for inner_list in &mut elements {
+                    inner_list.reverse();
+                }
+
+                let inner_len = elements.get(0).map(Vec::len).unwrap_or_default();
+                (0..inner_len)
+                    .map(|_| {
+                        elements.iter_mut().map(|inner_vec| {
+                            inner_vec.pop().unwrap()
+                        }).collect_vec().into_iter()
+                    })
+                    .collect::<SwapSet<_>>()
+                    .into()
+            },
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parity_set_from_single() {
+        let manual = ParitySet {
+            even: "test",
+            odd: "test",
+        };
+
+        let automatic = ParitySet::from_single("test");
+        assert_eq!(manual, automatic)
+    }
+
+    #[test]
+    fn parity_set_from_fn() {
+        let manual = ParitySet {
+            even: 1,
+            odd: 2,
+        };
+
+        let mut increment = 0;
+        let automatic = ParitySet::from_fn(move || {
+            increment += 1;
+            increment
+        });
+
+        assert_eq!(manual, automatic);
+    }
+
+    #[test]
+    fn upgrade_to_parity() {
+        let single = RedundantSet::Single("test");
+        let parity = RedundantSet::Parity(ParitySet::from_single("test"));
+        let upgraded = single.into_type(Redundancy::Parity, None).unwrap();
+        assert_eq!(upgraded, parity)
+    }
+
+    #[test]
+    fn upgrade_to_swapset() {
+        let single = RedundantSet::Single("test");
+        let multiple = RedundantSet::Swapchain(vec!["test"; 3].into());
+        let upgraded = single.into_type(Redundancy::Swapchain, Some(3)).unwrap();
+        assert_eq!(upgraded, multiple)
+    }
+
+    #[test]
+    fn merge_singles() {
+        let foo = RedundantSet::Single("foo");
+        let bar = RedundantSet::Single("bar");
+        let rust = RedundantSet::Single("rust");
+
+        let combined = [foo, bar, rust].into_iter().merge_rsets().unwrap();
+        assert_eq!(combined.get_redundancy(), Redundancy::Single);
+
+        let mut combined_inner = combined.unwrap_single();
+        assert_eq!(combined_inner.next(), Some("foo"));
+        assert_eq!(combined_inner.next(), Some("bar"));
+        assert_eq!(combined_inner.next(), Some("rust"));
+        assert_eq!(combined_inner.next(), None);
+    }
+
+    #[test]
+    fn merge_parity() {
+        let foo = RedundantSet::Single("foo");
+        let bar = RedundantSet::Parity(ParitySet::from_single("bar"));
+        let rust = RedundantSet::Parity(ParitySet { even: "crab", odd: "rust" });
+
+        let combined = [foo, bar, rust].into_iter().merge_rsets().unwrap();
+        assert_eq!(combined.get_redundancy(), Redundancy::Parity);
+
+        let mut combined_inner = combined.unwrap_parity();
+        assert_eq!(combined_inner.even.next(), Some("foo"));
+        assert_eq!(combined_inner.even.next(), Some("bar"));
+        assert_eq!(combined_inner.even.next(), Some("crab"));
+        assert_eq!(combined_inner.even.next(), None);
+
+        assert_eq!(combined_inner.odd.next(), Some("foo"));
+        assert_eq!(combined_inner.odd.next(), Some("bar"));
+        assert_eq!(combined_inner.odd.next(), Some("rust"));
+        assert_eq!(combined_inner.odd.next(), None);
+    }
+
+    #[test]
+    fn merge_swap_sets() {
+        let foo = RedundantSet::Single("foo");
+        let bar = RedundantSet::Swapchain(vec!["bar"; 3].into());
+        let rust = RedundantSet::Swapchain(vec!["rust", "crab", "ferris"].into());
+
+        let combined = [foo, bar, rust].into_iter().merge_rsets().unwrap();
+        assert_eq!(combined.get_redundancy(), Redundancy::Swapchain);
+
+        let combined_inner = combined.unwrap_swapchain();
+        assert_eq!(combined_inner.len(), 3);
+
+        let (mut a, mut b, mut c) = combined_inner.into_iter().collect_tuple().unwrap();
+
+        assert_eq!(a.next(), Some("foo"));
+        assert_eq!(a.next(), Some("bar"));
+        assert_eq!(a.next(), Some("rust"));
+        assert_eq!(a.next(), None);
+        
+        assert_eq!(b.next(), Some("foo"));
+        assert_eq!(b.next(), Some("bar"));
+        assert_eq!(b.next(), Some("crab"));
+        assert_eq!(b.next(), None);
+
+        assert_eq!(c.next(), Some("foo"));
+        assert_eq!(c.next(), Some("bar"));
+        assert_eq!(c.next(), Some("ferris"));
+        assert_eq!(c.next(), None);
+    }
+}
