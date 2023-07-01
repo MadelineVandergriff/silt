@@ -4,9 +4,8 @@ use silt::loader::{LoaderCreateInfo, LoaderHandles};
 use silt::material::{MaterialSkeleton, MaterialSystem, ShaderOptions};
 use silt::prelude::*;
 use silt::properties::{DeviceFeatures, DeviceFeaturesRequest, ProvidedFeatures};
-use silt::resources::{UniformBuffer, ResourceDescription};
+use silt::resources::{UniformBuffer, ResourceDescription, VertexInput, DescriptorFrequency};
 use silt::resources::{ImageCreateInfo, ImageFile, SampledImage};
-use silt::storage::descriptors::{DescriptorFrequency, ShaderBinding, VertexInput};
 use silt::sync::{CommandPool, QueueRequest, QueueType};
 use silt::{compile, id, resources};
 

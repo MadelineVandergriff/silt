@@ -7,8 +7,7 @@ use std::{collections::HashMap, ops::Deref, rc::Rc};
 use crate::{
     pipeline::{build_pipeline, build_render_pass},
     prelude::*,
-    resources::ResourceDescription,
-    storage::descriptors::{build_layout, Layouts},
+    resources::{ResourceDescription, Layouts, build_layout},
 };
 
 bitflags! {

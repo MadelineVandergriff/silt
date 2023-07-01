@@ -2,16 +2,55 @@ use derive_more::{Constructor, Deref, From, IsVariant, Unwrap};
 use std::{marker::PhantomData, rc::Rc};
 
 use crate::{
-    prelude::*,
-    storage::{
-        descriptors::{DescriptorFrequency, ShaderBinding, VertexInput, PartialShaderBinding},
-    },
+    prelude::*
 };
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
+pub enum DescriptorFrequency {
+    #[default]
+    Global,
+    Pass,
+    Material,
+    Object,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct PartialBindingDescription {
+    pub frequency: DescriptorFrequency,
+    pub binding: u32,
+    pub count: u32,
+}
+
+impl PartialBindingDescription {
+    /// ### WARNING! Only to be used to fill struct fields as below
+    /// ```
+    /// BindingDescription {
+    ///     ty: DescriptorFrequency::Material,
+    ///     ..partial.as_binding()
+    /// }
+    /// ```
+    pub fn as_binding(self) -> BindingDescription {
+        BindingDescription {
+            ty: Default::default(),
+            frequency: self.frequency,
+            binding: self.binding,
+            count: self.count,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct BindingDescription {
+    pub ty: vk::DescriptorType,
+    pub frequency: DescriptorFrequency,
+    pub binding: u32,
+    pub count: u32,
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct UniformDescription {
     pub id: Identifier,
-    pub binding: PartialShaderBinding,
+    pub binding: PartialBindingDescription,
     pub stride: vk::DeviceSize,
     pub elements: usize,
     pub host_visible: bool,
@@ -20,7 +59,13 @@ pub struct UniformDescription {
 #[derive(Debug, Clone, PartialEq)]
 pub struct SampledImageDescription {
     pub id: Identifier,
-    pub binding: PartialShaderBinding,
+    pub binding: PartialBindingDescription,
+}
+
+/// Allows for easy construction of ```VertexInputDescription``` objects
+pub trait VertexInput {
+    fn bindings() -> Vec<vk::VertexInputBindingDescription>;
+    fn attributes() -> Vec<vk::VertexInputAttributeDescription>;
 }
 
 #[derive(Debug, Clone)]
@@ -50,7 +95,7 @@ impl PartialEq for VertexInputDescription {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, Unwrap)]
 pub enum AttachmentType {
-    Color, DepthStencil, Input(PartialShaderBinding), Resolve
+    Color, DepthStencil, Input(PartialBindingDescription), Resolve
 }
 
 impl AttachmentType {
@@ -165,22 +210,22 @@ impl<T> Typed for TypedResourceDescription<T> {
 }
 
 impl ResourceDescription {
-    pub fn get_shader_binding(&self) -> Option<ShaderBinding> {
+    pub fn get_shader_binding(&self) -> Option<BindingDescription> {
         Some(match self {
             Self::Uniform(desc) => {
-                ShaderBinding {
+                BindingDescription {
                     ty: vk::DescriptorType::UNIFORM_BUFFER,
                     ..desc.binding.as_binding()
                 }
             },
             Self::SampledImage(desc) => {
-                ShaderBinding {
+                BindingDescription {
                     ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
                     ..desc.binding.as_binding()
                 }
             },
             Self::Attachment(desc) if desc.ty.is_input() => {
-                ShaderBinding {
+                BindingDescription {
                     ty: vk::DescriptorType::INPUT_ATTACHMENT,
                     ..desc.ty.unwrap_input().as_binding()
                 }
@@ -216,7 +261,7 @@ impl ResourceDescription {
     ) -> TypedResourceDescription<T> {
         Rc::new(Self::from(UniformDescription {
             id,
-            binding: PartialShaderBinding {
+            binding: PartialBindingDescription {
                 frequency,
                 binding,
                 count: 1,
@@ -232,7 +277,7 @@ impl ResourceDescription {
         Rc::new(
             SampledImageDescription {
                 id,
-                binding: PartialShaderBinding {
+                binding: PartialBindingDescription {
                     frequency,
                     binding,
                     count: 1,

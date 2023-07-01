@@ -7,8 +7,7 @@ use crate::{
     material::ShaderModule,
     prelude::*,
     properties::get_sample_counts,
-    resources::{AttachmentType, ResourceDescription, VertexInputDescription},
-    storage::descriptors::Layouts,
+    resources::{AttachmentType, ResourceDescription, VertexInputDescription, Layouts},
 };
 
 #[derive(Debug, Default)]

@@ -114,7 +114,7 @@ impl Parity {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ParitySet<T> {
     pub even: T,
     pub odd: T,
