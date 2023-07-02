@@ -1,4 +1,4 @@
-use crate::{prelude::*, resources::ParitySet};
+use crate::{prelude::*, collections::ParitySet};
 
 pub struct SyncPrimitives {
     pub image_available: vk::Semaphore,

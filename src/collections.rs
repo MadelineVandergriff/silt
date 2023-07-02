@@ -1,9 +1,111 @@
 use anyhow::{anyhow, Result};
-use derive_more::{From, Index, IndexMut, Into, IntoIterator, IsVariant, Unwrap};
+use derive_more::{From, Index, IndexMut, Into, IsVariant, Unwrap};
 use itertools::Itertools;
 use std::borrow::Borrow;
 
-use crate::prelude::{Destructible, IterDestructible};
+use crate::prelude::*;
+
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct FrequencySet<T> {
+    pub global: T,
+    pub pass: T,
+    pub material: T,
+    pub object: T,
+}
+
+impl<T> FrequencySet<T> {
+    pub fn get(&self, frequency: vk::DescriptorFrequency) -> &T {
+        match frequency {
+            vk::DescriptorFrequency::Global => &self.global,
+            vk::DescriptorFrequency::Pass => &self.pass,
+            vk::DescriptorFrequency::Material => &self.material,
+            vk::DescriptorFrequency::Object => &self.object,
+        }
+    }
+
+    pub fn get_mut(&mut self, frequency: vk::DescriptorFrequency) -> &mut T {
+        match frequency {
+            vk::DescriptorFrequency::Global => &mut self.global,
+            vk::DescriptorFrequency::Pass => &mut self.pass,
+            vk::DescriptorFrequency::Material => &mut self.material,
+            vk::DescriptorFrequency::Object => &mut self.object,
+        }
+    }
+
+    pub fn iter(&self) -> std::array::IntoIter<(vk::DescriptorFrequency, &T), 4> {
+        self.into_iter()
+    }
+
+    pub fn values(&self) -> std::array::IntoIter<&T, 4> {
+        [&self.global, &self.pass, &self.material, &self.object].into_iter()
+    }
+
+    pub fn into_values(self) -> std::array::IntoIter<T, 4> {
+        [self.global, self.pass, self.material, self.object].into_iter()
+    }
+}
+
+impl<T, C: IntoIterator<Item = T>> FrequencySet<C> {
+    pub fn flatten(self) -> Option<FrequencySet<T>> {
+        match self
+            .into_iter()
+            .map(|(_, collection)| collection.into_iter().exactly_one().ok())
+            .collect_tuple()
+            .unwrap()
+        {
+            (Some(global), Some(pass), Some(material), Some(object)) => Some(FrequencySet {
+                global,
+                pass,
+                material,
+                object,
+            }),
+            _ => None,
+        }
+    }
+}
+
+impl<T> IntoIterator for FrequencySet<T> {
+    type Item = (vk::DescriptorFrequency, T);
+    type IntoIter = std::array::IntoIter<Self::Item, 4>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        [
+            (vk::DescriptorFrequency::Global, self.global),
+            (vk::DescriptorFrequency::Pass, self.pass),
+            (vk::DescriptorFrequency::Material, self.material),
+            (vk::DescriptorFrequency::Object, self.object),
+        ]
+        .into_iter()
+    }
+}
+
+impl<'a, T> IntoIterator for &'a FrequencySet<T> {
+    type Item = (vk::DescriptorFrequency, &'a T);
+    type IntoIter = std::array::IntoIter<Self::Item, 4>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        [
+            (vk::DescriptorFrequency::Global, &self.global),
+            (vk::DescriptorFrequency::Pass, &self.pass),
+            (vk::DescriptorFrequency::Material, &self.material),
+            (vk::DescriptorFrequency::Object, &self.object),
+        ]
+        .into_iter()
+    }
+}
+
+impl<T, C: Default + Extend<T>> FromIterator<(vk::DescriptorFrequency, T)> for FrequencySet<C> {
+    fn from_iter<I: IntoIterator<Item = (vk::DescriptorFrequency, T)>>(iter: I) -> Self {
+        iter.into_iter()
+            .into_grouping_map()
+            .collect::<C>()
+            .into_iter()
+            .fold(FrequencySet::default(), |mut set, (freq, collection)| {
+                *set.get_mut(freq) = collection;
+                set
+            })
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Redundancy {
@@ -249,7 +351,9 @@ impl<T> RedundantSet<T> {
         Ok(match (self, ty) {
             (Self::Single(value), Redundancy::Single) => value.into(),
             (Self::Single(value), Redundancy::Parity) => ParitySet::from_single(value).into(),
-            (Self::Single(value), Redundancy::Swapchain) => SwapSet::from(vec![value; swap_len.unwrap_or(1)]).into(),
+            (Self::Single(value), Redundancy::Swapchain) => {
+                SwapSet::from(vec![value; swap_len.unwrap_or(1)]).into()
+            }
             (Self::Parity(value), Redundancy::Parity) => value.as_ref().into(),
             (Self::Swapchain(value), Redundancy::Swapchain) => value.as_ref().into(),
             _ => {
@@ -276,7 +380,9 @@ impl<T: Clone> RedundantSet<T> {
         Ok(match (self, ty) {
             (Self::Single(value), Redundancy::Single) => value.into(),
             (Self::Single(value), Redundancy::Parity) => ParitySet::from_single(value).into(),
-            (Self::Single(value), Redundancy::Swapchain) => SwapSet::from(vec![value; swap_len.unwrap_or(1)]).into(),
+            (Self::Single(value), Redundancy::Swapchain) => {
+                SwapSet::from(vec![value; swap_len.unwrap_or(1)]).into()
+            }
             (Self::Parity(value), Redundancy::Parity) => value.into(),
             (Self::Swapchain(value), Redundancy::Swapchain) => value.into(),
             (_self, ty) => {
@@ -327,7 +433,7 @@ impl<T: Clone, I: Iterator<Item = RedundantSet<T>>> RedundancyTools for I {
                 let redundancy = Some(set.get_redundancy());
                 let swap_len = match &set {
                     RedundantSet::Swapchain(s) => Some(s.len()),
-                    _ => None
+                    _ => None,
                 };
 
                 (set, redundancy, swap_len)
@@ -341,7 +447,8 @@ impl<T: Clone, I: Iterator<Item = RedundantSet<T>>> RedundancyTools for I {
             .ok_or(anyhow!("Failed to generalize redundancy"))?;
 
         let swap_len = if redundancy == Redundancy::Swapchain {
-            swap_lens.into_iter()
+            swap_lens
+                .into_iter()
                 .reduce(|a, b| match (a, b) {
                     (None, None) => None,
                     (None, Some(b)) => Some(b),
@@ -349,7 +456,7 @@ impl<T: Clone, I: Iterator<Item = RedundantSet<T>>> RedundancyTools for I {
                     (Some(a), Some(b)) => {
                         assert_eq!(a, b, "SwapSets must be of equal length");
                         Some(a)
-                    },
+                    }
                 })
                 .unwrap_or_default()
         } else {
@@ -369,15 +476,21 @@ impl<T: Clone, I: Iterator<Item = RedundantSet<T>>> RedundancyTools for I {
                     .into_iter(),
             ),
             Redundancy::Parity => {
-                let (evens, odds) = sets.into_iter()
+                let (evens, odds) = sets
+                    .into_iter()
                     .map(RedundantSet::unwrap_parity)
                     .map(|parity| parity.into_iter().collect_tuple().unwrap())
                     .unzip::<_, _, Vec<_>, Vec<_>>();
 
-                ParitySet { even: evens.into_iter(), odd: odds.into_iter() }.into()
-            },
+                ParitySet {
+                    even: evens.into_iter(),
+                    odd: odds.into_iter(),
+                }
+                .into()
+            }
             Redundancy::Swapchain => {
-                let mut elements = sets.into_iter()
+                let mut elements = sets
+                    .into_iter()
                     .map(RedundantSet::unwrap_swapchain)
                     .map(|swap_set| swap_set.0)
                     .collect::<Vec<_>>();
@@ -389,13 +502,15 @@ impl<T: Clone, I: Iterator<Item = RedundantSet<T>>> RedundancyTools for I {
                 let inner_len = elements.get(0).map(Vec::len).unwrap_or_default();
                 (0..inner_len)
                     .map(|_| {
-                        elements.iter_mut().map(|inner_vec| {
-                            inner_vec.pop().unwrap()
-                        }).collect_vec().into_iter()
+                        elements
+                            .iter_mut()
+                            .map(|inner_vec| inner_vec.pop().unwrap())
+                            .collect_vec()
+                            .into_iter()
                     })
                     .collect::<SwapSet<_>>()
                     .into()
-            },
+            }
         })
     }
 }
@@ -417,10 +532,7 @@ mod tests {
 
     #[test]
     fn parity_set_from_fn() {
-        let manual = ParitySet {
-            even: 1,
-            odd: 2,
-        };
+        let manual = ParitySet { even: 1, odd: 2 };
 
         let mut increment = 0;
         let automatic = ParitySet::from_fn(move || {
@@ -467,7 +579,10 @@ mod tests {
     fn merge_parity() {
         let foo = RedundantSet::Single("foo");
         let bar = RedundantSet::Parity(ParitySet::from_single("bar"));
-        let rust = RedundantSet::Parity(ParitySet { even: "crab", odd: "rust" });
+        let rust = RedundantSet::Parity(ParitySet {
+            even: "crab",
+            odd: "rust",
+        });
 
         let combined = [foo, bar, rust].into_iter().merge_rsets().unwrap();
         assert_eq!(combined.get_redundancy(), Redundancy::Parity);
@@ -502,7 +617,7 @@ mod tests {
         assert_eq!(a.next(), Some("bar"));
         assert_eq!(a.next(), Some("rust"));
         assert_eq!(a.next(), None);
-        
+
         assert_eq!(b.next(), Some("foo"));
         assert_eq!(b.next(), Some("bar"));
         assert_eq!(b.next(), Some("crab"));

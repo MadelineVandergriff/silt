@@ -1,9 +1,10 @@
-use crate::{material::ShaderModule, pipeline::Shader, prelude::*, resources::ParitySet};
-
 use anyhow::{anyhow, Result};
 use impl_trait_for_tuples::impl_for_tuples;
 use itertools::{izip, Itertools};
 use std::collections::HashMap;
+
+use crate::collections::ParitySet;
+use crate::{pipeline::Shader, prelude::*};
 
 pub trait BindableVec {
     fn bindings(&self) -> Vec<BindingDescription>;

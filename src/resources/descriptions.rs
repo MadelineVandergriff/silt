@@ -5,18 +5,11 @@ use crate::{
     prelude::*
 };
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
-pub enum DescriptorFrequency {
-    #[default]
-    Global,
-    Pass,
-    Material,
-    Object,
-}
+
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct PartialBindingDescription {
-    pub frequency: DescriptorFrequency,
+    pub frequency: vk::DescriptorFrequency,
     pub binding: u32,
     pub count: u32,
 }
@@ -42,7 +35,7 @@ impl PartialBindingDescription {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct BindingDescription {
     pub ty: vk::DescriptorType,
-    pub frequency: DescriptorFrequency,
+    pub frequency: vk::DescriptorFrequency,
     pub binding: u32,
     pub count: u32,
 }
@@ -257,7 +250,7 @@ impl ResourceDescription {
     pub fn uniform<T>(
         id: Identifier,
         binding: u32,
-        frequency: DescriptorFrequency,
+        frequency: vk::DescriptorFrequency,
     ) -> TypedResourceDescription<T> {
         Rc::new(Self::from(UniformDescription {
             id,
@@ -273,7 +266,7 @@ impl ResourceDescription {
         .into()
     }
 
-    pub fn sampled_image(id: Identifier, binding: u32, frequency: DescriptorFrequency) -> Rc<Self> {
+    pub fn sampled_image(id: Identifier, binding: u32, frequency: vk::DescriptorFrequency) -> Rc<Self> {
         Rc::new(
             SampledImageDescription {
                 id,

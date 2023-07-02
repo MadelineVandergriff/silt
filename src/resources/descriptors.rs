@@ -4,14 +4,17 @@ use itertools::Itertools;
 use std::{collections::HashMap, rc::Rc};
 
 use super::{
-    BindingDescription, Buffer, DescriptorFrequency, ParitySet, Redundancy, RedundantSet, Resource,
+    BindingDescription, Buffer, Resource,
     ResourceDescription, SampledImage, UniformBuffer,
 };
-use crate::{material::ShaderModule, prelude::*};
+use crate::collections::{ParitySet, Redundancy, RedundantSet};
+use crate::{material::ShaderModule, prelude::*, collections::FrequencySet};
+
+
 
 #[derive(Debug, Clone)]
 pub struct Layouts {
-    pub descriptors: HashMap<DescriptorFrequency, vk::DescriptorSetLayout>,
+    pub descriptors: FrequencySet<vk::DescriptorSetLayout>,
     pub pipeline: vk::PipelineLayout,
 }
 
@@ -80,7 +83,9 @@ where
             let layout = unsafe { loader.device.create_descriptor_set_layout(&layout_ci, None) };
             layout.map(|layout| (frequency, layout))
         })
-        .collect::<std::result::Result<HashMap<_, _>, _>>()?;
+        .collect::<std::result::Result<FrequencySet<Vec<_>>, _>>()?
+        .flatten()
+        .ok_or(anyhow!("Multiple descriptor layouts per frequency"))?;
 
     let set_layouts_flat = descriptors.values().map(|&l| l).collect_vec();
     let pipeline_layout_ci = vk::PipelineLayoutCreateInfo::builder().set_layouts(&set_layouts_flat);

@@ -72,3 +72,12 @@ impl Volume3D {
         }
     }
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
+pub enum DescriptorFrequency {
+    #[default]
+    Global,
+    Pass,
+    Material,
+    Object,
+}

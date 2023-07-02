@@ -4,7 +4,8 @@ use std::{
     ops::Deref,
 };
 
-use super::{Parity, ParitySet, ResourceDescription, TypedResourceDescription, UniformDescription};
+use super::{ResourceDescription, TypedResourceDescription, UniformDescription};
+use crate::collections::{ParitySet, Parity};
 use crate::{id, prelude::*, resources::Image, sync::CommandPool};
 
 #[derive(Clone, Debug)]

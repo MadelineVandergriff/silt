@@ -1,6 +1,6 @@
 use std::{cell::RefCell, collections::HashMap};
 
-use crate::{prelude::*, storage::descriptors::{Layouts, DescriptorFrequency}, resources::{Parity, ParitySet}};
+use crate::{prelude::*, storage::descriptors::{Layouts, DescriptorFrequency}, collections::{Parity, ParitySet}};
 
 pub struct RenderContext {
     pub loader: Loader,
