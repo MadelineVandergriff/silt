@@ -1,6 +1,8 @@
 use anyhow::{anyhow, Result};
 use derive_more::{IsVariant, Unwrap};
 use itertools::Itertools;
+use std::sync::Arc;
+use std::sync::atomic::AtomicUsize;
 use std::{collections::HashMap, rc::Rc};
 
 use super::{
@@ -167,7 +169,7 @@ impl ResourceBinding<'_> {
     pub fn write_descriptor_sets(
         &self,
         loader: &Loader,
-        sets: ParitySet<vk::DescriptorSet>,
+        sets: &FrequencySet<ParitySet<vk::DescriptorSet>>,
     ) -> Result<()> {
         if let Some(binding) = self.description.get_shader_binding() {
             let references = self
@@ -176,12 +178,11 @@ impl ResourceBinding<'_> {
                 .map_err(|_| anyhow!("Resources corresponding to a descriptor set must be either single or a parity set"))?
                 .unwrap_parity();
 
-            for (reference, set) in std::iter::zip(references, sets) {
-                reference.write_descriptor(&binding, loader, set);
+            for (reference, set) in std::iter::zip(references, sets.get(binding.frequency)) {
+                reference.write_descriptor(&binding, loader, *set);
             }
         }
 
-        todo!();
         Ok(())
     }
 }

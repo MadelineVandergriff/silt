@@ -5,7 +5,7 @@ use silt::material::{MaterialSkeleton, MaterialSystem, ShaderOptions};
 use silt::prelude::*;
 use silt::properties::{DeviceFeatures, DeviceFeaturesRequest, ProvidedFeatures};
 use silt::resources::{UniformBuffer, ResourceDescription, VertexInput};
-use silt::resources::{ImageCreateInfo, ImageFile, SampledImage};
+use silt::resources::{ImageFile};
 use silt::sync::{CommandPool, QueueRequest, QueueType};
 use silt::{compile, id, resources};
 

@@ -1,10 +1,11 @@
 use anyhow::{anyhow, Result};
+use derive_more::Deref;
 use std::{
     cell::{Ref, RefCell},
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     ffi::c_void,
     num::NonZeroU64,
-    ptr::NonNull,
+    ptr::NonNull, sync::{Arc, atomic::{AtomicUsize, Ordering}},
 };
 use uuid::Uuid;
 use winit::{
@@ -12,7 +13,9 @@ use winit::{
     event_loop::{ControlFlow, EventLoop, EventLoopWindowTarget},
 };
 
-use crate::vk;
+use crate::{vk, loader};
+
+use super::{Loader, Destructible};
 
 /// Subset of gpu_allocator::vulkan::Allocator with managed allocation handles
 pub struct Allocator {
@@ -154,4 +157,118 @@ impl Context {
     pub fn as_ref(&self) -> Ref<'_, Option<EventLoop<()>>> {
         self.inner.borrow()
     }
+}
+
+#[derive(Debug, Clone)]
+struct Pool {
+    pool: vk::DescriptorPool,
+    allocations: Arc<AtomicUsize>
+}
+
+#[derive(Debug, Clone, Deref)]
+pub struct DescriptorSet {
+    #[deref]
+    set: vk::DescriptorSet,
+    allocation: Arc<AtomicUsize>, 
+}
+
+impl Destructible for DescriptorSet {
+    fn destroy(self, _: &Loader) {
+        self.allocation.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+pub struct DescriptorPool {
+    current: Pool,
+    exhausted: VecDeque<Pool>,
+}
+
+impl DescriptorPool {
+    pub fn new(loader: &Loader) -> Result<Self> {
+        Ok(Self {
+            current: Self::get_pool(loader)?,
+            exhausted: VecDeque::new(),
+        })
+    }
+
+    pub fn allocate(&mut self, loader: &Loader, set_layouts: &[vk::DescriptorSetLayout]) -> Result<Vec<DescriptorSet>> {
+        let alloc_info = vk::DescriptorSetAllocateInfo::builder()
+            .set_layouts(set_layouts)
+            .descriptor_pool(self.current.pool);
+
+        let sets = unsafe {
+            loader.device.allocate_descriptor_sets(&alloc_info)
+        };
+
+        let sets = match sets {
+            Err(vk::Result::ERROR_OUT_OF_POOL_MEMORY) => {
+                self.bump_pool(loader)?;
+                self.allocate(loader, set_layouts)?
+            },
+            Err(_) => return Err(anyhow!("Unexpected pool allocation failure")),
+            Ok(sets) => {
+                self.current.allocations.fetch_add(sets.len(), Ordering::SeqCst);
+                sets.into_iter().map(|set| DescriptorSet{set, allocation: self.current.allocations.clone()}).collect()
+            }
+        };
+
+        Ok(sets)
+    }
+
+    fn get_pool(loader: &Loader) -> Result<Pool> {
+        let create_info = vk::DescriptorPoolCreateInfo::builder()
+            .max_sets(16)
+            .pool_sizes(&Self::POOL_SIZES);
+
+        let pool = unsafe {
+            loader.device.create_descriptor_pool(&create_info, None)?
+        };
+
+        Ok(Pool { pool, allocations: Arc::new(AtomicUsize::new(0)) })
+    }
+
+    fn bump_pool(&mut self, loader: &Loader) -> Result<()> {
+        if self.exhausted.len() >= 64 {
+            return Err(anyhow!("Extreme descriptor pool fragmentation, likely a recursion error"));
+        }
+
+        self.sweep(loader);
+        self.exhausted.push_back(self.current.clone());
+        self.current = Self::get_pool(loader)?;
+
+        Ok(())
+    }
+
+    fn sweep(&mut self, loader: &Loader) {
+        self.exhausted.retain(|pool| {
+            let retain = pool.allocations.load(Ordering::SeqCst) > 0;
+
+            if !retain {
+                unsafe {
+                    loader.device.destroy_descriptor_pool(pool.pool, None);
+                }
+            }
+
+            retain
+        });
+    }
+
+    const POOL_SIZES: [vk::DescriptorPoolSize; 4] = [
+            vk::DescriptorPoolSize {
+                ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+                descriptor_count: 32,
+            },
+            vk::DescriptorPoolSize {
+                ty: vk::DescriptorType::UNIFORM_BUFFER,
+                descriptor_count: 32,
+            },
+            vk::DescriptorPoolSize {
+                ty: vk::DescriptorType::STORAGE_BUFFER,
+                descriptor_count: 8,
+            },
+            vk::DescriptorPoolSize {
+                ty: vk::DescriptorType::STORAGE_IMAGE,
+                descriptor_count: 8,
+            },
+    ];
 }

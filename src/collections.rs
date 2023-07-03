@@ -260,7 +260,7 @@ impl<T> ParitySet<T> {
     }
 
     pub fn iter(&self) -> std::array::IntoIter<&T, 2> {
-        [&self.even, &self.odd].into_iter()
+        self.into_iter()
     }
 
     pub fn map<R>(&self, f: impl Fn(&T) -> R) -> ParitySet<R> {
@@ -281,6 +281,15 @@ impl<T: Clone> ParitySet<T> {
             even: value.clone(),
             odd: value,
         }
+    }
+}
+
+impl<'a, T> IntoIterator for &'a ParitySet<T> {
+    type Item = &'a T;
+    type IntoIter = std::array::IntoIter<&'a T, 2>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        [&self.even, &self.odd].into_iter()
     }
 }
 
