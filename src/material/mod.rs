@@ -52,7 +52,7 @@ impl ShaderEffect {
         let (shaders, modules) = modules.into_iter().unzip::<_, _, Vec<_>, Vec<_>>();
 
         Ok(Self {
-            layouts: build_layout(loader, modules)?,
+            layouts: todo!() /*build_layout(loader, modules)?*/,
             resources,
             shaders,
         })

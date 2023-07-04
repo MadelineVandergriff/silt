@@ -43,6 +43,20 @@ impl<T> FrequencySet<T> {
     pub fn into_values(self) -> std::array::IntoIter<T, 4> {
         [self.global, self.pass, self.material, self.object].into_iter()
     }
+    
+    pub fn map<T2, F: Fn(T) -> T2>(self, f: F) -> FrequencySet<T2> {
+        FrequencySet::from_iter_unsafe(self.into_values().map(f))
+    }
+
+    fn from_iter_unsafe<I: IntoIterator<Item = T>>(iter: I) -> Self {
+        let mut iter = iter.into_iter();
+        Self {
+            global: iter.next().unwrap(),
+            pass: iter.next().unwrap(),
+            material: iter.next().unwrap(),
+            object: iter.next().unwrap(),
+        }
+    }
 }
 
 impl<T, C: IntoIterator<Item = T>> FrequencySet<C> {

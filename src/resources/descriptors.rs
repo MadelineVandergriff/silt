@@ -1,6 +1,7 @@
 use anyhow::{anyhow, Result};
 use derive_more::{IsVariant, Unwrap};
 use itertools::Itertools;
+use std::ops::ControlFlow;
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 use std::{collections::HashMap, rc::Rc};
@@ -10,6 +11,7 @@ use super::{
     ResourceDescription, SampledImage, UniformBuffer,
 };
 use crate::collections::{ParitySet, Redundancy, RedundantSet};
+use crate::vk::DescriptorFrequency;
 use crate::{material::ShaderModule, prelude::*, collections::FrequencySet};
 
 
@@ -29,49 +31,57 @@ impl Destructible for Layouts {
     }
 }
 
-pub fn build_layout<'a, S: 'a>(loader: &Loader, shaders: S) -> Result<Layouts>
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum Discriminant {
+    Global,
+    Local(Identifier, vk::DescriptorFrequency)
+}
+
+pub fn build_layout<'a, S: 'a>(loader: &Loader, shaders: S) -> Result<()>
 where
-    S: IntoIterator<Item = &'a ShaderModule>,
+    S: IntoIterator<Item = (Identifier, &'a ShaderModule)>,
 {
     let descriptors = shaders
         .into_iter()
-        .flat_map(|shader| {
-            std::iter::zip(
-                [shader.stage_flags].into_iter().cycle(),
-                shader.resources.clone(),
-            )
+        .flat_map(|(id, shader)| {
+            shader.resources
+                .iter()
+                .cloned()
+                .map(move |resource| (id.clone(), shader.stage_flags, resource))
         })
-        .filter_map(|(stage, resource)| {
+        .filter_map(|(id, stage, resource)| {
             resource
                 .get_shader_binding()
-                .map(|binding| (stage, binding))
+                .map(|binding| (id, stage, binding))
         })
-        .group_by(|(_, binding)| (binding.binding, binding.frequency))
+        .group_by(|(id, _, binding)| (id.clone(), binding.frequency, binding.binding))
         .into_iter()
         .map(|(_, group)| {
-            let reduced = group
-                .reduce(|(acc_flags, acc_binding), (flags, binding)| {
-                    if acc_binding == binding {
-                        (acc_flags | flags, acc_binding)
+            let mut peekable = group.peekable();
+            let init = peekable.peek().unwrap().clone();
+
+            peekable
+                .try_fold(init, |acc, (_, flags, binding)| {
+                    if acc.2 == binding {
+                        Ok((acc.0, acc.1 | flags, binding))
                     } else {
-                        Default::default()
+                        Err(anyhow!("failed to accumulate bindings"))
                     }
                 })
-                .unwrap();
-
-            if reduced == Default::default() {
-                Err(anyhow!("Failed to accumulate bindings"))
+        })
+        .collect::<Result<Vec<(Identifier, vk::ShaderStageFlags, BindingDescription)>>>()?
+        .into_iter()
+        .group_by(|(id, _, binding)| {
+            if binding.frequency == vk::DescriptorFrequency::Global {
+                Discriminant::Global
             } else {
-                Ok(reduced)
+                Discriminant::Local(id.clone(), binding.frequency)
             }
         })
-        .collect::<Result<Vec<_>>>()?
         .into_iter()
-        .group_by(|(_, binding)| binding.frequency)
-        .into_iter()
-        .map(|(frequency, group)| {
+        .map(|(discriminant, group)| {
             let bindings = group
-                .map(|(flags, binding)| {
+                .map(|(id, flags, binding)| {
                     vk::DescriptorSetLayoutBinding::builder()
                         .binding(binding.binding)
                         .descriptor_count(binding.count)
@@ -83,13 +93,28 @@ where
 
             let layout_ci = vk::DescriptorSetLayoutCreateInfo::builder().bindings(&bindings);
             let layout = unsafe { loader.device.create_descriptor_set_layout(&layout_ci, None) };
-            layout.map(|layout| (frequency, layout))
+            let (frequency, id) = match discriminant {
+                Discriminant::Global => (vk::DescriptorFrequency::Global, None),
+                Discriminant::Local(id, freq) => (freq, Some(id)),
+            };
+            layout.map(|layout| (frequency, (layout, id)))
         })
-        .collect::<std::result::Result<FrequencySet<Vec<_>>, _>>()?
-        .flatten()
-        .ok_or(anyhow!("Multiple descriptor layouts per frequency"))?;
+        .collect::<std::result::Result<FrequencySet<Vec<_>>, _>>()?;
 
-    let set_layouts_flat = descriptors.values().map(|&l| l).collect_vec();
+    if descriptors.global.len() != 1 {
+        return Err(anyhow!("Not exactly one global descriptor set layout"))
+    }
+
+    let global = descriptors.global.first().unwrap().0;
+
+    let pipeline_layouts = descriptors.iter()
+        .filter(|(freq, _)| *freq != vk::DescriptorFrequency::Global)
+        .flat_map(|(_, layout)| layout.iter())
+        .map(|(layout, id)| {
+            
+        })
+
+    /*let set_layouts_flat = descriptors.values().map(|&l| l).collect_vec();
     let pipeline_layout_ci = vk::PipelineLayoutCreateInfo::builder().set_layouts(&set_layouts_flat);
 
     let pipeline = unsafe {
@@ -101,7 +126,9 @@ where
     Ok(Layouts {
         descriptors,
         pipeline,
-    })
+    })*/
+
+    Ok(())
 }
 
 #[derive(Debug, Clone, Copy, IsVariant, Unwrap)]
@@ -169,7 +196,7 @@ impl ResourceBinding<'_> {
     pub fn write_descriptor_sets(
         &self,
         loader: &Loader,
-        sets: &FrequencySet<ParitySet<vk::DescriptorSet>>,
+        sets: FrequencySet<ParitySet<vk::DescriptorSet>>,
     ) -> Result<()> {
         if let Some(binding) = self.description.get_shader_binding() {
             let references = self
