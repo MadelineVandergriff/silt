@@ -49,10 +49,10 @@ impl ShaderEffect {
             .flat_map(|(_, s)| s.resources.iter().cloned())
             .collect();
 
-        let (shaders, modules) = modules.into_iter().unzip::<_, _, Vec<_>, Vec<_>>();
+        let (shaders, _) = modules.clone().into_iter().unzip::<_, _, Vec<_>, Vec<_>>();
 
         Ok(Self {
-            layouts: todo!() /*build_layout(loader, modules)?*/,
+            layouts: build_layout(loader, modules)?,
             resources,
             shaders,
         })
@@ -162,6 +162,7 @@ impl<'a> MaterialSystem<'a> {
         let render_pass = build_render_pass(&self.loader, resources.clone())?;
         let pipeline = build_pipeline(
             &self.loader,
+            todo!(),
             render_pass,
             &effect.layouts,
             resources.clone(),

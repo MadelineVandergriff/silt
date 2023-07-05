@@ -132,6 +132,8 @@ pub trait IterDestructible<T: Destructible>: IntoIterator<Item = T> + Sized {
     }
 }
 
+impl<T: Destructible, I: IntoIterator<Item = T> + Sized> IterDestructible<T> for I {}
+
 pub trait Vectorizable<T> {
     fn to_vec(self) -> Vec<T>;
 }

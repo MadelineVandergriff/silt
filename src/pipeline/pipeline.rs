@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use itertools::Itertools;
 use std::{ffi::CStr, ops::Deref};
 
@@ -19,6 +19,7 @@ struct PipelineResourceState {
 
 pub fn build_pipeline<'a, R, T, S>(
     loader: &Loader,
+    id: Identifier,
     render_pass: vk::RenderPass,
     layouts: &Layouts,
     resources: R,
@@ -116,7 +117,7 @@ where
         .color_blend_state(&color_blend_state)
         .dynamic_state(&dynamic_state)
         .depth_stencil_state(&depth_stencil_state)
-        .layout(layouts.pipeline)
+        .layout(*layouts.pipeline_layouts.get(&id).ok_or_else(|| anyhow!(""))?)
         .render_pass(render_pass)
         .subpass(0);
 
@@ -210,7 +211,7 @@ pub unsafe fn get_present_pipeline(
         .color_blend_state(&color_blend_state)
         .dynamic_state(&dynamic_state)
         .depth_stencil_state(&depth_stencil_state)
-        .layout(layouts.pipeline)
+        .layout(todo!())
         .render_pass(render_pass)
         .subpass(0);
 
