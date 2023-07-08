@@ -1,48 +1,67 @@
 use anyhow::{anyhow, Result};
-use derive_more::{IsVariant, Unwrap};
+use derive_more::{Deref, IsVariant, Unwrap};
 use itertools::Itertools;
 use std::collections::HashSet;
 use std::ops::ControlFlow;
-use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
+use std::sync::Arc;
 use std::{collections::HashMap, rc::Rc};
 
 use super::{
-    BindingDescription, Buffer, Resource,
-    ResourceDescription, SampledImage, UniformBuffer,
+    BindingDescription, Buffer, Resource, ResourceDescription, SampledImage, UniformBuffer,
 };
 use crate::collections::{ParitySet, Redundancy, RedundantSet};
-use crate::{material::ShaderModule, prelude::*, collections::FrequencySet};
+use crate::{collections::FrequencySet, material::ShaderModule, prelude::*};
 
-
-
+/// ### Warning
+/// descriptor set layouts held inside a layout are not destroyed on
+/// [`Destructible::destroy`], and instead are owned by the
+/// [`Layouts`] struct, and destroyed with it
 #[derive(Debug, Clone)]
+pub struct Layout {
+    pub pipeline: vk::PipelineLayout,
+    pub descriptors: FrequencySet<Option<vk::DescriptorSetLayout>>,
+}
+
+impl Destructible for Layout {
+    fn destroy(self, loader: &Loader) {
+        self.pipeline.destroy(loader);
+    }
+}
+
+#[derive(Debug, Clone, Deref)]
 pub struct Layouts {
-    pub descriptor_layouts: Vec<vk::DescriptorSetLayout>,
-    pub pipeline_layouts: HashMap<Identifier, vk::PipelineLayout>
+    descriptors_flat: Vec<vk::DescriptorSetLayout>,
+    #[deref]
+    pub layouts: HashMap<Identifier, Layout>,
 }
 
 impl Destructible for Layouts {
     fn destroy(self, loader: &Loader) {
-        self.descriptor_layouts.destroy(loader);
-        self.pipeline_layouts.into_values().destroy(loader);
+        self.descriptors_flat.destroy(loader);
+        self.layouts.into_values().destroy(loader);
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 enum Discriminant {
     Global,
-    Local(Identifier, vk::DescriptorFrequency)
+    Local(Identifier, vk::DescriptorFrequency),
 }
 
-fn equivalient_binding(lhs: vk::DescriptorSetLayoutBinding, rhs: vk::DescriptorSetLayoutBinding) -> bool {
+fn equivalient_binding(
+    lhs: vk::DescriptorSetLayoutBinding,
+    rhs: vk::DescriptorSetLayoutBinding,
+) -> bool {
     lhs.binding == rhs.binding
-    && lhs.descriptor_count == rhs.descriptor_count
-    && lhs.descriptor_type == rhs.descriptor_type
-    && lhs.p_immutable_samplers == rhs.p_immutable_samplers
+        && lhs.descriptor_count == rhs.descriptor_count
+        && lhs.descriptor_type == rhs.descriptor_type
+        && lhs.p_immutable_samplers == rhs.p_immutable_samplers
 }
 
-fn consolidate_bindings<I: IntoIterator<Item = vk::DescriptorSetLayoutBinding>>(iter: I) -> Result<Vec<vk::DescriptorSetLayoutBinding>> {
+fn consolidate_bindings<I: IntoIterator<Item = vk::DescriptorSetLayoutBinding>>(
+    iter: I,
+) -> Result<Vec<vk::DescriptorSetLayoutBinding>> {
     iter.into_iter()
         .sorted_by_key(|binding| binding.binding)
         .try_fold(Vec::new(), |mut acc, binding| {
@@ -55,7 +74,11 @@ fn consolidate_bindings<I: IntoIterator<Item = vk::DescriptorSetLayoutBinding>>(
 
                     *acc.last_mut().unwrap() = back;
                 } else if back.binding == binding.binding {
-                    return Err(anyhow!("Bindings match, but other elements not equivalent: {:?}, {:?}", back, binding))
+                    return Err(anyhow!(
+                        "Bindings match, but other elements not equivalent: {:?}, {:?}",
+                        back,
+                        binding
+                    ));
                 } else {
                     acc.push(binding)
                 }
@@ -77,7 +100,8 @@ where
         .flat_map(|(id, module)| {
             let stage_flags = module.stage_flags;
 
-            module.resources
+            module
+                .resources
                 .iter()
                 .filter_map(|resource| resource.get_shader_binding())
                 .map(move |desc| {
@@ -103,55 +127,62 @@ where
         .map(|(discriminant, bindings)| {
             let bindings = consolidate_bindings(bindings)?;
 
-            let create_info = vk::DescriptorSetLayoutCreateInfo::builder()
-                .bindings(&bindings);
+            let create_info = vk::DescriptorSetLayoutCreateInfo::builder().bindings(&bindings);
 
             let layout = unsafe {
-                loader.device.create_descriptor_set_layout(&create_info, None)?
+                loader
+                    .device
+                    .create_descriptor_set_layout(&create_info, None)?
             };
 
             Ok((discriminant, layout))
         })
         .collect::<Result<HashMap<_, _>>>()?;
-    
-    let pipeline_layouts = shaders
+
+    let layouts = shaders
         .into_iter()
         .map(|(id, _)| id)
         .collect::<HashSet<_>>()
         .into_iter()
         .map(|id| {
-            let layouts = [
-                vk::DescriptorFrequency::Pass,
-                vk::DescriptorFrequency::Material,
-                vk::DescriptorFrequency::Object
-            ].into_iter()
+            let descriptors = vk::DescriptorFrequency::ELEMENTS
+                .into_iter()
                 .filter_map(|freq| {
-                    let discriminant = Discriminant::Local(id.clone(), freq);
-                    descriptor_layouts.get(&discriminant).cloned()
+                    let layout = if freq == vk::DescriptorFrequency::Global {
+                        descriptor_layouts.get(&Discriminant::Global).cloned()
+                    } else {
+                        let discriminant = Discriminant::Local(id.clone(), freq);
+                        descriptor_layouts.get(&discriminant).cloned()
+                    };
+
+                    layout.map(|layout| (freq, layout))
                 })
-                .chain(descriptor_layouts.get(&Discriminant::Global).cloned())
-                .collect_vec();
+                .collect::<FrequencySet<Vec<_>>>()
+                .map(|layouts| layouts.get(0).copied());
             
-            let create_info = vk::PipelineLayoutCreateInfo::builder()
-                .set_layouts(&layouts);
+            let flattened = descriptors.values().copied().flatten().collect_vec();
+            let create_info = vk::PipelineLayoutCreateInfo::builder().set_layouts(&flattened);
 
-            let pipeline_layout = unsafe {
-                loader.device.create_pipeline_layout(&create_info, None)
-            };
+            let pipeline_layout =
+                unsafe { loader.device.create_pipeline_layout(&create_info, None) };
 
-            pipeline_layout.map(|layout| {
-                (id.clone(), layout)
+            pipeline_layout.map(|pipeline| {
+                (
+                    id.clone(),
+                    Layout {
+                        pipeline,
+                        descriptors,
+                    }
+                )
             })
         })
         .collect::<std::result::Result<HashMap<_, _>, _>>()?;
 
-    let descriptor_layouts = descriptor_layouts
-        .into_values()
-        .collect::<Vec<_>>();
+    let descriptors_flat = descriptor_layouts.into_values().collect::<Vec<_>>();
 
-    Ok(Layouts{
-        descriptor_layouts,
-        pipeline_layouts,
+    Ok(Layouts {
+        descriptors_flat,
+        layouts,
     })
 }
 

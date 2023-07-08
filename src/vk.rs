@@ -81,3 +81,12 @@ pub enum DescriptorFrequency {
     Material,
     Object,
 }
+
+impl DescriptorFrequency {
+    pub const ELEMENTS: [Self; 4] = [
+        Self::Global,
+        Self::Pass,
+        Self::Material,
+        Self::Object
+    ];
+}

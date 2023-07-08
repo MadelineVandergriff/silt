@@ -117,7 +117,7 @@ where
         .color_blend_state(&color_blend_state)
         .dynamic_state(&dynamic_state)
         .depth_stencil_state(&depth_stencil_state)
-        .layout(*layouts.pipeline_layouts.get(&id).ok_or_else(|| anyhow!(""))?)
+        .layout(layouts.layouts.get(&id).ok_or_else(|| anyhow!(""))?.pipeline)
         .render_pass(render_pass)
         .subpass(0);
 
