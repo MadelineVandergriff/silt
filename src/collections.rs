@@ -45,10 +45,10 @@ impl<T> FrequencySet<T> {
     }
     
     pub fn map<T2, F: Fn(T) -> T2>(self, f: F) -> FrequencySet<T2> {
-        FrequencySet::from_iter_unsafe(self.into_values().map(f))
+        unsafe { FrequencySet::from_iter_unsafe(self.into_values().map(f)) }
     }
 
-    fn from_iter_unsafe<I: IntoIterator<Item = T>>(iter: I) -> Self {
+    pub unsafe fn from_iter_unsafe<I: IntoIterator<Item = T>>(iter: I) -> Self {
         let mut iter = iter.into_iter();
         Self {
             global: iter.next().unwrap(),

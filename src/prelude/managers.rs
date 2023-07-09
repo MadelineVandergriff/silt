@@ -166,13 +166,13 @@ struct Pool {
 }
 
 #[derive(Debug, Clone, Deref)]
-pub struct DescriptorSet {
+pub struct ManagedDescriptorSet {
     #[deref]
     set: vk::DescriptorSet,
     allocation: Arc<AtomicUsize>, 
 }
 
-impl Destructible for DescriptorSet {
+impl Destructible for ManagedDescriptorSet {
     fn destroy(self, _: &Loader) {
         self.allocation.fetch_sub(1, Ordering::SeqCst);
     }
@@ -191,7 +191,7 @@ impl DescriptorPool {
         })
     }
 
-    pub fn allocate(&mut self, loader: &Loader, set_layouts: &[vk::DescriptorSetLayout]) -> Result<Vec<DescriptorSet>> {
+    pub fn allocate(&mut self, loader: &Loader, set_layouts: &[vk::DescriptorSetLayout]) -> Result<Vec<ManagedDescriptorSet>> {
         let alloc_info = vk::DescriptorSetAllocateInfo::builder()
             .set_layouts(set_layouts)
             .descriptor_pool(self.current.pool);
@@ -208,7 +208,7 @@ impl DescriptorPool {
             Err(_) => return Err(anyhow!("Unexpected pool allocation failure")),
             Ok(sets) => {
                 self.current.allocations.fetch_add(sets.len(), Ordering::SeqCst);
-                sets.into_iter().map(|set| DescriptorSet{set, allocation: self.current.allocations.clone()}).collect()
+                sets.into_iter().map(|set| ManagedDescriptorSet{set, allocation: self.current.allocations.clone()}).collect()
             }
         };
 

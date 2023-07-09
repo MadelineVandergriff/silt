@@ -159,7 +159,7 @@ where
                 })
                 .collect::<FrequencySet<Vec<_>>>()
                 .map(|layouts| layouts.get(0).copied());
-            
+
             let flattened = descriptors.values().copied().flatten().collect_vec();
             let create_info = vk::PipelineLayoutCreateInfo::builder().set_layouts(&flattened);
 
@@ -172,7 +172,7 @@ where
                     Layout {
                         pipeline,
                         descriptors,
-                    }
+                    },
                 )
             })
         })
@@ -299,4 +299,37 @@ impl BindableResource for Resource<SampledImage> {
             reference,
         }
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct DescriptorSets {
+    pub sets: FrequencySet<ParitySet<ManagedDescriptorSet>>,
+    pub id: Identifier,
+}
+
+impl DescriptorSets {
+    pub fn get_sets(&self) -> FrequencySet<ParitySet<vk::DescriptorSet>> {
+        // SAFETY: rebuilds frequency set directly from values iterator
+        unsafe {
+            FrequencySet::from_iter_unsafe(self.sets.values().map(|sets| sets.map(|set| **set)))
+        }
+    }
+}
+
+impl Destructible for DescriptorSets {
+    fn destroy(self, loader: &Loader) {
+        self.sets.into_values().skip(1).flatten().destroy(loader);
+    }
+}
+
+pub fn write_descriptor_sets<'a, R>(loader: &Loader, resources: R, sets: &DescriptorSets) -> Result<()>
+where
+    R: IntoIterator<Item = &'a ResourceBinding<'a>>,
+{
+    let sets = sets.get_sets();
+    for resource in resources {
+        resource.write_descriptor_sets(loader, sets)?;
+    }
+
+    Ok(())
 }
