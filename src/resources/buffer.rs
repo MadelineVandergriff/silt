@@ -294,7 +294,7 @@ impl<T: Copy> UniformBuffer<T> {
     }
 
     pub fn get_buffers(&self) -> ParitySet<&Buffer> {
-        self.buffers.as_ref().map(|v| &v.buffer)
+        self.buffers.as_ref().ref_map(|v| &v.buffer)
     }
 
     pub fn copy(&self, parity: Parity, value: T) {

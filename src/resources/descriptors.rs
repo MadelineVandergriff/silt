@@ -10,7 +10,7 @@ use std::{collections::HashMap, rc::Rc};
 use super::{
     BindingDescription, Buffer, Resource, ResourceDescription, SampledImage, UniformBuffer,
 };
-use crate::collections::{ParitySet, Redundancy, RedundantSet};
+use crate::collections::{ParitySet, PartialFrequencySet, Redundancy, RedundantSet};
 use crate::{collections::FrequencySet, material::ShaderModule, prelude::*};
 
 /// ### Warning
@@ -248,21 +248,62 @@ pub struct ResourceBinding<'a> {
 }
 
 impl ResourceBinding<'_> {
-    pub fn write_descriptor_sets(
+    fn get_references(&self) -> Result<ParitySet<&ResourceReference<'_>>> {
+        Ok(self
+                .reference
+                .as_type(Redundancy::Parity, None)
+                .map_err(|_| anyhow!("Resources corresponding to a descriptor set must be either single or a parity set"))?
+                .unwrap_parity()
+        )
+    }
+
+    pub fn write_full(
         &self,
         loader: &Loader,
         sets: FrequencySet<ParitySet<vk::DescriptorSet>>,
     ) -> Result<()> {
         if let Some(binding) = self.description.get_shader_binding() {
-            let references = self
-                .reference
-                .as_type(Redundancy::Parity, None)
-                .map_err(|_| anyhow!("Resources corresponding to a descriptor set must be either single or a parity set"))?
-                .unwrap_parity();
+            let references = self.get_references()?;
 
             for (reference, set) in std::iter::zip(references, sets.get(binding.frequency)) {
                 reference.write_descriptor(&binding, loader, *set);
             }
+        }
+
+        Ok(())
+    }
+
+    /// ## Description
+    /// Allows use of [`PartialFrequencySet`] with `ResourceBinding` at the cost of
+    /// not always writing the descriptor if the referenced binding is global
+    pub fn write_partial(
+        &self,
+        loader: &Loader,
+        sets: PartialFrequencySet<ParitySet<vk::DescriptorSet>>,
+    ) -> Result<()> {
+        if let Some(binding) = self.description.get_shader_binding() {
+            let references = self.get_references()?;
+
+            if let Some(set) = sets.get(binding.frequency) {
+                for (reference, set) in std::iter::zip(references, set) {
+                    reference.write_descriptor(&binding, loader, *set);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn write_global(&self, loader: &Loader, sets: ParitySet<vk::DescriptorSet>) -> Result<()> {
+        match self.description.get_shader_binding() {
+            Some(binding) if binding.frequency == vk::DescriptorFrequency::Global => {
+                let references = self.get_references()?;
+
+                for (reference, set) in std::iter::zip(references, sets) {
+                    reference.write_descriptor(&binding, loader, set);
+                }
+            }
+            _ => (),
         }
 
         Ok(())
@@ -279,7 +320,7 @@ impl<T: Copy> BindableResource for Resource<UniformBuffer<T>> {
         let reference = self
             .resource
             .get_buffers()
-            .map(|&buffer| ResourceReference::Buffer(buffer))
+            .ref_map(|&buffer| ResourceReference::Buffer(buffer))
             .into();
 
         ResourceBinding {
@@ -303,32 +344,46 @@ impl BindableResource for Resource<SampledImage> {
 
 #[derive(Debug, Clone)]
 pub struct DescriptorSets {
-    pub sets: FrequencySet<ParitySet<ManagedDescriptorSet>>,
+    pub global_set: ParitySet<vk::DescriptorSet>,
+    pub sets: PartialFrequencySet<ParitySet<ManagedDescriptorSet>>,
     pub id: Identifier,
 }
 
 impl DescriptorSets {
+    pub fn get_unmanaged_sets(&self) -> PartialFrequencySet<ParitySet<vk::DescriptorSet>> {
+        self.sets.ref_map(|sets| sets.ref_map(|set| **set))
+    }
+
     pub fn get_sets(&self) -> FrequencySet<ParitySet<vk::DescriptorSet>> {
-        // SAFETY: rebuilds frequency set directly from values iterator
-        unsafe {
-            FrequencySet::from_iter_unsafe(self.sets.values().map(|sets| sets.map(|set| **set)))
+        self.get_unmanaged_sets()
+            .into_frequency_set(self.global_set)
+    }
+
+    pub fn write_descriptor_sets<'a, R>(&self, loader: &Loader, resources: R) -> Result<()>
+    where
+        R: IntoIterator<Item = &'a ResourceBinding<'a>>,
+    {
+        let sets = self.get_unmanaged_sets();
+        for resource in resources {
+            resource.write_partial(loader, sets)?;
         }
+
+        Ok(())
     }
 }
 
 impl Destructible for DescriptorSets {
     fn destroy(self, loader: &Loader) {
-        self.sets.into_values().skip(1).flatten().destroy(loader);
+        self.sets.into_values().flatten().destroy(loader);
     }
 }
 
-pub fn write_descriptor_sets<'a, R>(loader: &Loader, resources: R, sets: &DescriptorSets) -> Result<()>
+pub fn write_global_descriptor_sets<'a, R>(loader: &Loader, resources: R, sets: ParitySet<vk::DescriptorSet>) -> Result<()>
 where
     R: IntoIterator<Item = &'a ResourceBinding<'a>>,
 {
-    let sets = sets.get_sets();
     for resource in resources {
-        resource.write_descriptor_sets(loader, sets)?;
+        resource.write_global(loader, sets)?;
     }
 
     Ok(())

@@ -43,9 +43,21 @@ impl<T> FrequencySet<T> {
     pub fn into_values(self) -> std::array::IntoIter<T, 4> {
         [self.global, self.pass, self.material, self.object].into_iter()
     }
-    
+
     pub fn map<T2, F: Fn(T) -> T2>(self, f: F) -> FrequencySet<T2> {
         unsafe { FrequencySet::from_iter_unsafe(self.into_values().map(f)) }
+    }
+
+    pub fn ref_map<T2, F: Fn(&T) -> T2>(&self, f: F) -> FrequencySet<T2> {
+        unsafe { FrequencySet::from_iter_unsafe(self.values().map(f)) }
+    }
+
+    pub fn as_partial_frequency_set(&self) -> PartialFrequencySet<&T> {
+        PartialFrequencySet {
+            pass: &self.pass,
+            material: &self.material,
+            object: &self.object,
+        }
     }
 
     pub unsafe fn from_iter_unsafe<I: IntoIterator<Item = T>>(iter: I) -> Self {
@@ -55,6 +67,28 @@ impl<T> FrequencySet<T> {
             pass: iter.next().unwrap(),
             material: iter.next().unwrap(),
             object: iter.next().unwrap(),
+        }
+    }
+}
+
+impl<T: Clone> FrequencySet<&T> {
+    pub fn cloned(self) -> FrequencySet<T> {
+        FrequencySet {
+            global: self.global.clone(),
+            pass: self.pass.clone(),
+            material: self.material.clone(),
+            object: self.object.clone(),
+        }
+    }
+}
+
+impl<T: Copy> FrequencySet<&T> {
+    pub fn copied(self) -> FrequencySet<T> {
+        FrequencySet {
+            global: *self.global,
+            pass: *self.pass,
+            material: *self.material,
+            object: *self.object,
         }
     }
 }
@@ -118,6 +152,157 @@ impl<T, C: Default + Extend<T>> FromIterator<(vk::DescriptorFrequency, T)> for F
                 *set.get_mut(freq) = collection;
                 set
             })
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct PartialFrequencySet<T> {
+    pub pass: T,
+    pub material: T,
+    pub object: T,
+}
+
+impl<T> PartialFrequencySet<T> {
+    pub fn get(&self, frequency: vk::DescriptorFrequency) -> Option<&T> {
+        match frequency {
+            vk::DescriptorFrequency::Pass => Some(&self.pass),
+            vk::DescriptorFrequency::Material => Some(&self.material),
+            vk::DescriptorFrequency::Object => Some(&self.object),
+            _ => None,
+        }
+    }
+
+    pub fn get_mut(&mut self, frequency: vk::DescriptorFrequency) -> Option<&mut T> {
+        match frequency {
+            vk::DescriptorFrequency::Pass => Some(&mut self.pass),
+            vk::DescriptorFrequency::Material => Some(&mut self.material),
+            vk::DescriptorFrequency::Object => Some(&mut self.object),
+            _ => None,
+        }
+    }
+
+    pub fn iter(&self) -> std::array::IntoIter<(vk::DescriptorFrequency, &T), 3> {
+        self.into_iter()
+    }
+
+    pub fn values(&self) -> std::array::IntoIter<&T, 3> {
+        [&self.pass, &self.material, &self.object].into_iter()
+    }
+
+    pub fn into_values(self) -> std::array::IntoIter<T, 3> {
+        [self.pass, self.material, self.object].into_iter()
+    }
+
+    pub fn map<T2, F: Fn(T) -> T2>(self, f: F) -> PartialFrequencySet<T2> {
+        unsafe { PartialFrequencySet::from_iter_unsafe(self.into_values().map(f)) }
+    }
+
+    pub fn ref_map<T2, F: Fn(&T) -> T2>(&self, f: F) -> PartialFrequencySet<T2> {
+        unsafe { PartialFrequencySet::from_iter_unsafe(self.values().map(f)) }
+    }
+
+    pub fn into_frequency_set(self, global: T) -> FrequencySet<T> {
+        FrequencySet {
+            global,
+            pass: self.pass,
+            material: self.material,
+            object: self.object,
+        }
+    }
+
+    pub unsafe fn from_iter_unsafe<I: IntoIterator<Item = T>>(iter: I) -> Self {
+        let mut iter = iter.into_iter();
+        Self {
+            pass: iter.next().unwrap(),
+            material: iter.next().unwrap(),
+            object: iter.next().unwrap(),
+        }
+    }
+}
+
+impl<T: Clone> PartialFrequencySet<&T> {
+    pub fn cloned(self) -> PartialFrequencySet<T> {
+        PartialFrequencySet {
+            pass: self.pass.clone(),
+            material: self.material.clone(),
+            object: self.object.clone(),
+        }
+    }
+}
+
+impl<T: Copy> PartialFrequencySet<&T> {
+    pub fn copied(self) -> PartialFrequencySet<T> {
+        PartialFrequencySet {
+            pass: *self.pass,
+            material: *self.material,
+            object: *self.object,
+        }
+    }
+}
+
+impl<T, C: IntoIterator<Item = T>> PartialFrequencySet<C> {
+    pub fn flatten(self) -> Option<PartialFrequencySet<T>> {
+        match self
+            .into_iter()
+            .map(|(_, collection)| collection.into_iter().exactly_one().ok())
+            .collect_tuple()
+            .unwrap()
+        {
+            (Some(pass), Some(material), Some(object)) => Some(PartialFrequencySet {
+                pass,
+                material,
+                object,
+            }),
+            _ => None,
+        }
+    }
+}
+
+impl<T> IntoIterator for PartialFrequencySet<T> {
+    type Item = (vk::DescriptorFrequency, T);
+    type IntoIter = std::array::IntoIter<Self::Item, 3>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        [
+            (vk::DescriptorFrequency::Pass, self.pass),
+            (vk::DescriptorFrequency::Material, self.material),
+            (vk::DescriptorFrequency::Object, self.object),
+        ]
+        .into_iter()
+    }
+}
+
+impl<'a, T> IntoIterator for &'a PartialFrequencySet<T> {
+    type Item = (vk::DescriptorFrequency, &'a T);
+    type IntoIter = std::array::IntoIter<Self::Item, 3>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        [
+            (vk::DescriptorFrequency::Pass, &self.pass),
+            (vk::DescriptorFrequency::Material, &self.material),
+            (vk::DescriptorFrequency::Object, &self.object),
+        ]
+        .into_iter()
+    }
+}
+
+impl<T, C: Default + Extend<T>> FromIterator<(vk::DescriptorFrequency, T)>
+    for PartialFrequencySet<C>
+{
+    fn from_iter<I: IntoIterator<Item = (vk::DescriptorFrequency, T)>>(iter: I) -> Self {
+        iter.into_iter()
+            .into_grouping_map()
+            .collect::<C>()
+            .into_iter()
+            .fold(
+                PartialFrequencySet::default(),
+                |mut set, (freq, collection)| {
+                    if let Some(value) = set.get_mut(freq) {
+                        *value = collection;
+                    }
+                    set
+                },
+            )
     }
 }
 
@@ -273,7 +458,14 @@ impl<T> ParitySet<T> {
         self.into_iter()
     }
 
-    pub fn map<R>(&self, f: impl Fn(&T) -> R) -> ParitySet<R> {
+    pub fn map<R>(self, f: impl Fn(T) -> R) -> ParitySet<R> {
+        ParitySet {
+            even: f(self.even),
+            odd: f(self.odd),
+        }
+    }
+
+    pub fn ref_map<R>(&self, f: impl Fn(&T) -> R) -> ParitySet<R> {
         ParitySet {
             even: f(&self.even),
             odd: f(&self.odd),
