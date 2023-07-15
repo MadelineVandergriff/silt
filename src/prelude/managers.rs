@@ -15,7 +15,7 @@ use winit::{
 
 use crate::{vk, loader};
 
-use super::{Loader, Destructible};
+use super::{Loader, Destructible, IterDestructible};
 
 /// Subset of gpu_allocator::vulkan::Allocator with managed allocation handles
 pub struct Allocator {
@@ -165,6 +165,12 @@ struct Pool {
     allocations: Arc<AtomicUsize>
 }
 
+impl Destructible for Pool {
+    fn destroy(self, loader: &Loader) {
+        self.pool.destroy(loader);
+    }
+}
+
 #[derive(Debug, Clone, Deref)]
 pub struct ManagedDescriptorSet {
     #[deref]
@@ -178,9 +184,17 @@ impl Destructible for ManagedDescriptorSet {
     }
 }
 
+#[derive(Debug)]
 pub struct DescriptorPool {
     current: Pool,
     exhausted: VecDeque<Pool>,
+}
+
+impl Destructible for DescriptorPool {
+    fn destroy(self, loader: &Loader) {
+        self.current.destroy(loader);
+        self.exhausted.destroy(loader);
+    }
 }
 
 impl DescriptorPool {
@@ -244,9 +258,7 @@ impl DescriptorPool {
             let retain = pool.allocations.load(Ordering::SeqCst) > 0;
 
             if !retain {
-                unsafe {
-                    loader.device.destroy_descriptor_pool(pool.pool, None);
-                }
+                pool.clone().destroy(loader);
             }
 
             retain

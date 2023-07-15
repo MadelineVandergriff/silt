@@ -7,7 +7,7 @@ use std::{collections::HashMap, ops::Deref, rc::Rc};
 use crate::{
     pipeline::{build_pipeline, build_render_pass},
     prelude::*,
-    resources::{ResourceDescription, Layouts, build_layout},
+    resources::{ResourceDescription, Layouts, DescriptorSets}, collections::ParitySet,
 };
 
 bitflags! {
@@ -31,11 +31,16 @@ pub struct ShaderModule {
     pub resources: Vec<Rc<ResourceDescription>>,
 }
 
+impl Destructible for ShaderModule {
+    fn destroy(self, loader: &Loader) {
+        self.module.destroy(loader);
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ShaderEffect {
-    pub resources: Vec<Rc<ResourceDescription>>,
-    pub layouts: Layouts,
-    pub shaders: Vec<Identifier>,
+    resources: Vec<Rc<ResourceDescription>>,
+    shaders: Vec<Identifier>,
 }
 
 impl ShaderEffect {
@@ -52,7 +57,6 @@ impl ShaderEffect {
         let (shaders, _) = modules.clone().into_iter().unzip::<_, _, Vec<_>, Vec<_>>();
 
         Ok(Self {
-            layouts: build_layout(loader, modules)?,
             resources,
             shaders,
         })
@@ -64,24 +68,51 @@ pub struct Pipeline {
     pass: vk::RenderPass,
 }
 
+#[derive(Debug, Clone, Default)]
 pub struct MaterialSkeleton {
-    pub effects: Vec<Rc<ShaderEffect>>,
+    pub effects: Vec<Identifier>,
 }
 
-pub struct MaterialSystem<'a> {
+pub struct MaterialSystemBuilder<'a> {
     loader: &'a Loader,
     resources: HashMap<Identifier, ResourceDescription>,
     shaders: HashMap<Identifier, ShaderModule>,
-    pipelines: HashMap<ByAddress<Rc<ShaderEffect>>, Pipeline>,
+    effects: HashMap<Identifier, ShaderEffect>,
+    skeletons: HashMap<Identifier, MaterialSkeleton>
 }
 
-impl<'a> MaterialSystem<'a> {
+#[derive(Debug)]
+pub struct MaterialSystem {
+    // Copy of material description stuff
+    resources: HashMap<Identifier, ResourceDescription>,
+    shaders: HashMap<Identifier, ShaderModule>,
+    effects: HashMap<Identifier, ShaderEffect>,
+    skeletons: HashMap<Identifier, MaterialSkeleton>,
+
+    // Descriptors
+    descriptor_pool: DescriptorPool,
+    layouts: Layouts,
+    global_sets: Option<ParitySet<ManagedDescriptorSet>>,
+    local_sets: HashMap<Identifier, DescriptorSets>
+}
+
+impl Destructible for MaterialSystem {
+    fn destroy(self, loader: &Loader) {
+        self.shaders.into_values().destroy(loader);
+        self.descriptor_pool.destroy(loader);
+        self.global_sets.into_iter().flatten().destroy(loader);
+        self.local_sets.into_values().destroy(loader);
+    }
+}
+
+impl<'a> MaterialSystemBuilder<'a> {
     pub fn new(loader: &'a Loader) -> Self {
         Self {
             loader,
             resources: Default::default(),
             shaders: Default::default(),
-            pipelines: Default::default(),
+            effects: Default::default(),
+            skeletons: Default::default(),
         }
     }
 
@@ -120,8 +151,9 @@ impl<'a> MaterialSystem<'a> {
 
     pub fn register_effect(
         &mut self,
+        id: Identifier,
         identifiers: impl IntoIterator<Item = Identifier> + Clone,
-    ) -> Result<Rc<ShaderEffect>> {
+    ) -> Result<Identifier> {
         let modules = identifiers
             .clone()
             .into_iter()
@@ -133,44 +165,49 @@ impl<'a> MaterialSystem<'a> {
             })
             .collect::<Result<Vec<_>>>()?;
 
-        Ok(Rc::new(ShaderEffect::new(self.loader, modules)?))
+        if self.effects.insert(id.clone(), ShaderEffect::new(self.loader, modules)?).is_some() {
+            return Err(anyhow!("Effect {} already exists", id))
+        }
+
+        Ok(id)
     }
 
-    pub fn build_material(&mut self, skeleton: MaterialSkeleton) -> Result<Material> {
-        let pipelines = skeleton
-            .effects
-            .into_iter()
-            .map(|effect| self.build_pipeline(effect).map(Clone::clone))
-            .collect::<Result<Vec<_>>>()?;
-        Err(anyhow!(""))
+    pub fn register_material(
+        &mut self,
+        id: Identifier,
+        skeleton: MaterialSkeleton
+    ) -> Result<Identifier> {
+        if self.skeletons.insert(id.clone(), skeleton).is_some() {
+            return Err(anyhow!("Skeleton {} already exists", id))
+        }
+
+        Ok(id)
     }
 
-    pub fn build_pipeline(&mut self, effect: Rc<ShaderEffect>) -> Result<&Pipeline> {
-        let key = ByAddress(effect.clone());
-        let pipeline = self.build_pipeline_uncached(effect)?;
-        self.pipelines.insert(key.clone(), pipeline);
-        Ok(self.pipelines.get(&key).unwrap())
+    pub fn build(self) -> Result<MaterialSystem> {
+        let mut descriptor_pool = DescriptorPool::new(self.loader)?;
+        let layouts = Layouts::new(self.loader, self.shaders.iter())?;
+        let global_sets = match layouts.global_layout {
+            Some(layout) => Some(descriptor_pool.allocate(self.loader, &[layout, layout])?.into_iter().collect()),
+            None => None
+        };
+
+        Ok(MaterialSystem {
+            resources: self.resources,
+            shaders: self.shaders,
+            effects: self.effects,
+            skeletons: self.skeletons,
+
+            descriptor_pool,
+            layouts,
+            global_sets,
+            local_sets: Default::default()
+        })
     }
+}
 
-    fn build_pipeline_uncached(&self, effect: Rc<ShaderEffect>) -> Result<Pipeline> {
-        let resources = effect.resources.iter().map(|resource| resource.deref());
-        let shaders = effect
-            .shaders
-            .iter()
-            .map(|id| self.shaders.get(id).unwrap());
+impl MaterialSystem {
 
-        let render_pass = build_render_pass(&self.loader, resources.clone())?;
-        let pipeline = build_pipeline(
-            &self.loader,
-            todo!(),
-            render_pass,
-            &effect.layouts,
-            resources.clone(),
-            shaders,
-        )?;
-
-        Err(anyhow!("todo"))
-    }
 }
 
 pub struct Material {}

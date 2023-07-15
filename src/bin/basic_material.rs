@@ -1,7 +1,7 @@
 use anyhow::Result;
 use memoffset::offset_of;
 use silt::loader::{LoaderCreateInfo, LoaderHandles};
-use silt::material::{MaterialSkeleton, MaterialSystem, ShaderOptions};
+use silt::material::{MaterialSkeleton, MaterialSystemBuilder, ShaderOptions};
 use silt::prelude::*;
 use silt::properties::{DeviceFeatures, DeviceFeaturesRequest, ProvidedFeatures};
 use silt::resources::{UniformBuffer, ResourceDescription, VertexInput};
@@ -87,7 +87,7 @@ fn main() -> Result<()> {
         vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER,
     )?;
 
-    let mut materials = MaterialSystem::new(&loader);
+    let mut materials = MaterialSystemBuilder::new(&loader);
 
     let vertex = ResourceDescription::vertex_input::<Vertex>(id!("Pos/UV Vertex"));
     let mvp =
@@ -126,13 +126,13 @@ fn main() -> Result<()> {
         ImageFile::new("assets/textures/viking_room.png")?.upload_to_gpu(&loader, features, &pool)
     })?;
 
-    let model_loading = materials.register_effect([vertex_shader, fragment_shader])?;
+    let model_loading = materials.register_effect(id!("Model Loading"), [vertex_shader, fragment_shader])?;
 
     let skeleton = MaterialSkeleton {
         effects: vec![model_loading.clone()],
     };
 
-    let pipeline = materials.build_pipeline(model_loading)?;
+    //let pipeline = materials.build_pipeline(model_loading)?;
 
     Ok(())
 }
