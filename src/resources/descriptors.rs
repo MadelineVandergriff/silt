@@ -286,7 +286,7 @@ impl ResourceBinding<'_> {
     pub fn write_partial(
         &self,
         loader: &Loader,
-        sets: PartialFrequencySet<ParitySet<vk::DescriptorSet>>,
+        sets: FrequencySet<Option<ParitySet<vk::DescriptorSet>>>,
     ) -> Result<()> {
         if let Some(binding) = self.description.get_shader_binding() {
             let references = self.get_references()?;
@@ -351,16 +351,37 @@ impl BindableResource for Resource<SampledImage> {
 
 #[derive(Debug, Clone)]
 pub struct DescriptorSets {
-    pub global_set: ParitySet<vk::DescriptorSet>,
-    pub sets: PartialFrequencySet<ParitySet<ManagedDescriptorSet>>,
+    pub global_set: Option<ParitySet<vk::DescriptorSet>>,
+    pub sets: PartialFrequencySet<Option<ParitySet<ManagedDescriptorSet>>>,
 }
 
 impl DescriptorSets {
-    pub fn get_unmanaged_sets(&self) -> PartialFrequencySet<ParitySet<vk::DescriptorSet>> {
-        self.sets.ref_map(|sets| sets.ref_map(|set| **set))
+    pub fn allocate(loader: &Loader, pool: &mut DescriptorPool, layout: &Layout, global_set: Option<ParitySet<vk::DescriptorSet>>) -> Result<Self> {
+        let (frequencies, layouts) = layout.descriptors
+            .as_partial_frequency_set()
+            .into_iter()
+            .filter_map(|(freq, opt)| opt.as_ref().map(|&layout| (freq, layout)))
+            .unzip::<_, _, Vec<_>, Vec<_>>();
+
+        let allocated_sets = ParitySet::from_fn(|| pool.allocate(loader, &layouts));
+        
+        let flattened_sets = std::iter::zip(allocated_sets.even?, allocated_sets.odd?)
+            .map(|(even, odd)| ParitySet::new(even, odd))
+            .collect_vec();
+
+        let sets = std::iter::zip(frequencies, flattened_sets).collect::<PartialFrequencySet<Vec<_>>>().map(|mut set| set.pop());
+
+        Ok(Self {
+            global_set,
+            sets
+        })
     }
 
-    pub fn get_sets(&self) -> FrequencySet<ParitySet<vk::DescriptorSet>> {
+    pub fn get_unmanaged_sets(&self) -> PartialFrequencySet<Option<ParitySet<vk::DescriptorSet>>> {
+        self.sets.ref_map(|sets| sets.as_ref().map(|sets| sets.ref_map(|set| **set)))
+    }
+
+    pub fn get_sets(&self) -> FrequencySet<Option<ParitySet<vk::DescriptorSet>>> {
         self.get_unmanaged_sets()
             .into_frequency_set(self.global_set)
     }
@@ -369,7 +390,7 @@ impl DescriptorSets {
     where
         R: IntoIterator<Item = &'a ResourceBinding<'a>>,
     {
-        let sets = self.get_unmanaged_sets();
+        let sets = self.get_unmanaged_sets().into_frequency_set(None);
         for resource in resources {
             resource.write_partial(loader, sets)?;
         }
@@ -380,7 +401,7 @@ impl DescriptorSets {
 
 impl Destructible for DescriptorSets {
     fn destroy(self, loader: &Loader) {
-        self.sets.into_values().flatten().destroy(loader);
+        self.sets.into_values().flatten().flatten().destroy(loader);
     }
 }
 

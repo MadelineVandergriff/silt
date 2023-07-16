@@ -440,6 +440,10 @@ impl<T> From<Vec<T>> for ParitySet<T> {
 }
 
 impl<T> ParitySet<T> {
+    pub fn new(even: T, odd: T) -> Self {
+        Self { even, odd }
+    }
+
     pub fn get(&self, parity: Parity) -> &T {
         match parity {
             Parity::Even => &self.even,

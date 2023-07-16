@@ -207,7 +207,13 @@ impl<'a> MaterialSystemBuilder<'a> {
 }
 
 impl MaterialSystem {
+    fn generate_effect_pipeline(&mut self, loader: &Loader, id: &Identifier) -> Result<()> {
+        let effect = self.effects.get(id).ok_or(anyhow!("Effect {} does not exist", id))?;
+        let layout = self.layouts.get(id).unwrap();
+        let local_sets = DescriptorSets::allocate(loader, &mut self.descriptor_pool, layout, None);
 
+        Ok(())
+    }
 }
 
 pub struct Material {}
