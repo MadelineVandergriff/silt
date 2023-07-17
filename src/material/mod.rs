@@ -2,7 +2,7 @@ use anyhow::{anyhow, Result};
 use bitflags::bitflags;
 use by_address::ByAddress;
 use shaderc::ShaderKind;
-use std::{collections::HashMap, ops::Deref, rc::Rc};
+use std::{collections::HashMap, ops::Deref, rc::Rc, cell::RefCell};
 
 use crate::{
     pipeline::{build_pipeline, build_render_pass},
@@ -81,6 +81,22 @@ pub struct MaterialSystemBuilder<'a> {
     skeletons: HashMap<Identifier, MaterialSkeleton>
 }
 
+#[derive(Debug, Clone)]
+pub struct PipelineData {
+    pub local_sets: DescriptorSets,
+    pub pipeline: vk::Pipeline,
+    pub render_pass: vk::RenderPass,
+}
+
+impl Destructible for PipelineData {
+    fn destroy(self, loader: &Loader) {
+        self.local_sets.destroy(loader);
+        self.pipeline.destroy(loader);
+        self.render_pass.destroy(loader);
+    }
+}
+
+
 #[derive(Debug)]
 pub struct MaterialSystem {
     // Copy of material description stuff
@@ -90,18 +106,18 @@ pub struct MaterialSystem {
     skeletons: HashMap<Identifier, MaterialSkeleton>,
 
     // Descriptors
-    descriptor_pool: DescriptorPool,
+    descriptor_pool: RefCell<DescriptorPool>,
     layouts: Layouts,
     global_sets: Option<ParitySet<ManagedDescriptorSet>>,
-    local_sets: HashMap<Identifier, DescriptorSets>
+    pipelines: HashMap<Identifier, PipelineData>
 }
 
 impl Destructible for MaterialSystem {
     fn destroy(self, loader: &Loader) {
         self.shaders.into_values().destroy(loader);
-        self.descriptor_pool.destroy(loader);
+        self.descriptor_pool.into_inner().destroy(loader);
         self.global_sets.into_iter().flatten().destroy(loader);
-        self.local_sets.into_values().destroy(loader);
+        self.pipelines.into_values().destroy(loader);
     }
 }
 
@@ -185,10 +201,10 @@ impl<'a> MaterialSystemBuilder<'a> {
     }
 
     pub fn build(self) -> Result<MaterialSystem> {
-        let mut descriptor_pool = DescriptorPool::new(self.loader)?;
+        let descriptor_pool = RefCell::new(DescriptorPool::new(self.loader)?);
         let layouts = Layouts::new(self.loader, self.shaders.iter())?;
         let global_sets = match layouts.global_layout {
-            Some(layout) => Some(descriptor_pool.allocate(self.loader, &[layout, layout])?.into_iter().collect()),
+            Some(layout) => Some(descriptor_pool.borrow_mut().allocate(self.loader, &[layout, layout])?.into_iter().collect()),
             None => None
         };
 
@@ -201,18 +217,33 @@ impl<'a> MaterialSystemBuilder<'a> {
             descriptor_pool,
             layouts,
             global_sets,
-            local_sets: Default::default()
+            pipelines: Default::default()
         })
     }
 }
 
 impl MaterialSystem {
-    fn generate_effect_pipeline(&mut self, loader: &Loader, id: &Identifier) -> Result<()> {
-        let effect = self.effects.get(id).ok_or(anyhow!("Effect {} does not exist", id))?;
-        let layout = self.layouts.get(id).unwrap();
-        let local_sets = DescriptorSets::allocate(loader, &mut self.descriptor_pool, layout, None);
+    pub fn get_effect_pipeline(&mut self, loader: &Loader, id: &Identifier) -> Result<&PipelineData> {
+        if !self.pipelines.contains_key(id) {
+            let pipeline = self.generate_effect_pipeline(loader, id)?;
+            self.pipelines.insert(id.clone(), pipeline);
+        }
 
-        Ok(())
+        Ok(self.pipelines.get(id).unwrap())
+    }
+
+    fn generate_effect_pipeline(&self, loader: &Loader, id: &Identifier) -> Result<PipelineData> {
+        let effect = self.effects.get(id).ok_or(anyhow!("Effect {} does not exist", id))?;
+        let resources = effect.resources.iter().map(|resource| resource.as_ref());
+        let shaders = effect.shaders.iter().map(|id| self.shaders.get(id).unwrap());
+
+        let layout = self.layouts.get(id).unwrap();
+        let local_sets = DescriptorSets::allocate(loader, &mut self.descriptor_pool.borrow_mut(), layout, None)?;
+
+        let render_pass = build_render_pass(loader, resources.clone())?;
+        let pipeline = build_pipeline(loader, render_pass, layout, resources, shaders)?;
+
+        Ok(PipelineData { local_sets, pipeline, render_pass })
     }
 }
 

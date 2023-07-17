@@ -7,7 +7,7 @@ use crate::{
     material::ShaderModule,
     prelude::*,
     properties::get_sample_counts,
-    resources::{AttachmentType, ResourceDescription, VertexInputDescription, Layouts},
+    resources::{AttachmentType, ResourceDescription, VertexInputDescription, PipelineLayout},
 };
 
 #[derive(Debug, Default)]
@@ -19,9 +19,8 @@ struct PipelineResourceState {
 
 pub fn build_pipeline<'a, R, T, S>(
     loader: &Loader,
-    id: Identifier,
     render_pass: vk::RenderPass,
-    layouts: &Layouts,
+    layout: &PipelineLayout,
     resources: R,
     shaders: S,
 ) -> Result<vk::Pipeline>
@@ -117,7 +116,7 @@ where
         .color_blend_state(&color_blend_state)
         .dynamic_state(&dynamic_state)
         .depth_stencil_state(&depth_stencil_state)
-        .layout(layouts.layouts.get(&id).ok_or_else(|| anyhow!(""))?.pipeline)
+        .layout(layout.pipeline)
         .render_pass(render_pass)
         .subpass(0);
 
@@ -140,7 +139,6 @@ pub unsafe fn get_present_pipeline(
     pdevice: vk::PhysicalDevice,
     render_pass: vk::RenderPass,
     shaders: Shaders,
-    layouts: &Layouts,
 ) -> Result<vk::Pipeline> {
     let msaa_samples = get_sample_counts(loader, pdevice);
 

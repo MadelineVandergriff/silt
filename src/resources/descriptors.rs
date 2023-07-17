@@ -18,12 +18,12 @@ use crate::{collections::FrequencySet, material::ShaderModule, prelude::*};
 /// [`Destructible::destroy`], and instead are owned by the
 /// [`Layouts`] struct, and destroyed with it
 #[derive(Debug, Clone)]
-pub struct Layout {
+pub struct PipelineLayout {
     pub pipeline: vk::PipelineLayout,
     pub descriptors: FrequencySet<Option<vk::DescriptorSetLayout>>,
 }
 
-impl Destructible for Layout {
+impl Destructible for PipelineLayout {
     fn destroy(self, loader: &Loader) {
         self.pipeline.destroy(loader);
     }
@@ -80,7 +80,7 @@ fn consolidate_bindings<I: IntoIterator<Item = vk::DescriptorSetLayoutBinding>>(
 pub struct Layouts {
     descriptors_flat: Vec<vk::DescriptorSetLayout>,
     #[deref]
-    pub layouts: HashMap<Identifier, Layout>,
+    pub layouts: HashMap<Identifier, PipelineLayout>,
     pub global_layout: Option<vk::DescriptorSetLayout>,
 }
 
@@ -171,7 +171,7 @@ impl Layouts {
                 pipeline_layout.map(|pipeline| {
                     (
                         id.clone(),
-                        Layout {
+                        PipelineLayout {
                             pipeline,
                             descriptors,
                         },
@@ -356,7 +356,7 @@ pub struct DescriptorSets {
 }
 
 impl DescriptorSets {
-    pub fn allocate(loader: &Loader, pool: &mut DescriptorPool, layout: &Layout, global_set: Option<ParitySet<vk::DescriptorSet>>) -> Result<Self> {
+    pub fn allocate(loader: &Loader, pool: &mut DescriptorPool, layout: &PipelineLayout, global_set: Option<ParitySet<vk::DescriptorSet>>) -> Result<Self> {
         let (frequencies, layouts) = layout.descriptors
             .as_partial_frequency_set()
             .into_iter()
