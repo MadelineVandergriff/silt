@@ -4,8 +4,8 @@ use silt::loader::{LoaderCreateInfo, LoaderHandles};
 use silt::material::{MaterialSkeleton, MaterialSystemBuilder, ShaderOptions};
 use silt::prelude::*;
 use silt::properties::{DeviceFeatures, DeviceFeaturesRequest, ProvidedFeatures};
-use silt::resources::{UniformBuffer, ResourceDescription, VertexInput};
-use silt::resources::{ImageFile};
+use silt::resources::{ImageFile, BindableResource};
+use silt::resources::{ResourceDescription, UniformBuffer, VertexInput};
 use silt::sync::{CommandPool, QueueRequest, QueueType};
 use silt::{compile, id, resources};
 
@@ -92,8 +92,11 @@ fn main() -> Result<()> {
     let vertex = ResourceDescription::vertex_input::<Vertex>(id!("Pos/UV Vertex"));
     let mvp =
         ResourceDescription::uniform::<MVP>(id!("MVP Uniform"), 0, vk::DescriptorFrequency::Global);
-    let texture =
-        ResourceDescription::sampled_image(id!("Texture Image"), 1, vk::DescriptorFrequency::Global);
+    let texture = ResourceDescription::sampled_image(
+        id!("Texture Image"),
+        1,
+        vk::DescriptorFrequency::Global,
+    );
 
     let vertex_shader = materials.add_shader(
         id!("MVP Vertex Pass"),
@@ -126,13 +129,17 @@ fn main() -> Result<()> {
         ImageFile::new("assets/textures/viking_room.png")?.upload_to_gpu(&loader, features, &pool)
     })?;
 
-    let model_loading = materials.register_effect(id!("Model Loading"), [vertex_shader, fragment_shader])?;
+    let effect =
+        materials.register_effect(id!("Model Loading Effect"), [vertex_shader, fragment_shader])?;
+    let model_loading = materials.register_material(
+        id!("Model Loading Material"),
+        MaterialSkeleton {
+            effects: vec![effect.clone()],
+        },
+    )?;
 
-    let skeleton = MaterialSkeleton {
-        effects: vec![model_loading.clone()],
-    };
-
-    //let pipeline = materials.build_pipeline(model_loading)?;
+    let mut materials = materials.build_static()?;
+    *materials.get_global_resources_mut() = vec![mvp_buffer.bind(), texture_image.bind()].into();
 
     Ok(())
 }

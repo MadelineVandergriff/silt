@@ -1,13 +1,13 @@
 use anyhow::{anyhow, Result};
 use bitflags::bitflags;
-use by_address::ByAddress;
-use shaderc::ShaderKind;
-use std::{collections::HashMap, ops::Deref, rc::Rc, cell::RefCell};
+use derive_more::{Deref, From, Into};
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use crate::{
+    collections::{ParitySet, PartialFrequencySet},
     pipeline::{build_pipeline, build_render_pass},
     prelude::*,
-    resources::{ResourceDescription, Layouts, DescriptorSets}, collections::ParitySet,
+    resources::{DescriptorSets, Layouts, ResourceBinding, ResourceDescription},
 };
 
 bitflags! {
@@ -56,10 +56,7 @@ impl ShaderEffect {
 
         let (shaders, _) = modules.clone().into_iter().unzip::<_, _, Vec<_>, Vec<_>>();
 
-        Ok(Self {
-            resources,
-            shaders,
-        })
+        Ok(Self { resources, shaders })
     }
 }
 
@@ -78,7 +75,7 @@ pub struct MaterialSystemBuilder<'a> {
     resources: HashMap<Identifier, ResourceDescription>,
     shaders: HashMap<Identifier, ShaderModule>,
     effects: HashMap<Identifier, ShaderEffect>,
-    skeletons: HashMap<Identifier, MaterialSkeleton>
+    skeletons: HashMap<Identifier, MaterialSkeleton>,
 }
 
 #[derive(Debug, Clone)]
@@ -96,9 +93,59 @@ impl Destructible for PipelineData {
     }
 }
 
+pub trait ResourceProvider<'a>: Sized + Default {
+    type Resource<'b>: AsRef<ResourceBinding<'a>>
+    where
+        Self: 'b;
+    type Iter<'b>: IntoIterator<Item = Self::Resource<'b>>
+    where
+        Self: 'b;
 
-#[derive(Debug)]
-pub struct MaterialSystem {
+    fn get_resources<'b>(&'b mut self) -> Self::Iter<'b>;
+}
+
+#[derive(Default, Debug, Clone, From, Into, Deref)]
+pub struct StaticResourceProvider<'a> {
+    pub resources: Vec<ResourceBinding<'a>>,
+}
+
+impl<'a> ResourceProvider<'a> for StaticResourceProvider<'a> {
+    type Resource<'b> = &'b ResourceBinding<'a> where Self: 'b;
+    type Iter<'b> = std::slice::Iter<'b, ResourceBinding<'a>> where Self: 'b;
+
+    fn get_resources<'b>(&'b mut self) -> Self::Iter<'b> {
+        self.iter()
+    }
+}
+
+#[derive(From, Into, Deref)]
+pub struct DynamicResourceProvider<'a, R: Default + IntoIterator<Item = ResourceBinding<'a>>> {
+    #[deref(forward)]
+    pub func: Box<dyn FnMut() -> R>,
+}
+
+impl<'a, R: Default + IntoIterator<Item = ResourceBinding<'a>>> Default
+    for DynamicResourceProvider<'a, R>
+{
+    fn default() -> Self {
+        Self {
+            func: Box::new(|| R::default()),
+        }
+    }
+}
+
+impl<'a, R: Default + IntoIterator<Item = ResourceBinding<'a>>> ResourceProvider<'a>
+    for DynamicResourceProvider<'a, R>
+{
+    type Resource<'b> = ResourceBinding<'a> where Self: 'b;
+    type Iter<'b> = R where Self: 'b;
+
+    fn get_resources<'b>(&'b mut self) -> Self::Iter<'b> {
+        (self.func)()
+    }
+}
+
+pub struct MaterialSystem<'a, R: ResourceProvider<'a>> {
     // Copy of material description stuff
     resources: HashMap<Identifier, ResourceDescription>,
     shaders: HashMap<Identifier, ShaderModule>,
@@ -109,10 +156,15 @@ pub struct MaterialSystem {
     descriptor_pool: RefCell<DescriptorPool>,
     layouts: Layouts,
     global_sets: Option<ParitySet<ManagedDescriptorSet>>,
-    pipelines: HashMap<Identifier, PipelineData>
+    pipelines: HashMap<Identifier, PipelineData>,
+
+    // Resource References
+    _phantom: std::marker::PhantomData<&'a Self>,
+    global_resources: R,
+    local_resources: HashMap<Identifier, PartialFrequencySet<R>>,
 }
 
-impl Destructible for MaterialSystem {
+impl<'a, R: ResourceProvider<'a>> Destructible for MaterialSystem<'a, R> {
     fn destroy(self, loader: &Loader) {
         self.shaders.into_values().destroy(loader);
         self.descriptor_pool.into_inner().destroy(loader);
@@ -181,8 +233,12 @@ impl<'a> MaterialSystemBuilder<'a> {
             })
             .collect::<Result<Vec<_>>>()?;
 
-        if self.effects.insert(id.clone(), ShaderEffect::new(self.loader, modules)?).is_some() {
-            return Err(anyhow!("Effect {} already exists", id))
+        if self
+            .effects
+            .insert(id.clone(), ShaderEffect::new(self.loader, modules)?)
+            .is_some()
+        {
+            return Err(anyhow!("Effect {} already exists", id));
         }
 
         Ok(id)
@@ -191,21 +247,30 @@ impl<'a> MaterialSystemBuilder<'a> {
     pub fn register_material(
         &mut self,
         id: Identifier,
-        skeleton: MaterialSkeleton
+        skeleton: MaterialSkeleton,
     ) -> Result<Identifier> {
         if self.skeletons.insert(id.clone(), skeleton).is_some() {
-            return Err(anyhow!("Skeleton {} already exists", id))
+            return Err(anyhow!("Skeleton {} already exists", id));
         }
 
         Ok(id)
     }
 
-    pub fn build(self) -> Result<MaterialSystem> {
+    pub fn build<'b, R: ResourceProvider<'b>>(
+        self,
+        global_resource_provider: R,
+    ) -> Result<MaterialSystem<'b, R>> {
         let descriptor_pool = RefCell::new(DescriptorPool::new(self.loader)?);
         let layouts = Layouts::new(self.loader, self.shaders.iter())?;
         let global_sets = match layouts.global_layout {
-            Some(layout) => Some(descriptor_pool.borrow_mut().allocate(self.loader, &[layout, layout])?.into_iter().collect()),
-            None => None
+            Some(layout) => Some(
+                descriptor_pool
+                    .borrow_mut()
+                    .allocate(self.loader, &[layout, layout])?
+                    .into_iter()
+                    .collect(),
+            ),
+            None => None,
         };
 
         Ok(MaterialSystem {
@@ -217,13 +282,51 @@ impl<'a> MaterialSystemBuilder<'a> {
             descriptor_pool,
             layouts,
             global_sets,
-            pipelines: Default::default()
+            pipelines: Default::default(),
+
+            _phantom: std::marker::PhantomData,
+            global_resources: global_resource_provider,
+            local_resources: Default::default(),
         })
+    }
+
+    pub fn build_static<'b>(self) -> Result<MaterialSystem<'b, StaticResourceProvider<'b>>> {
+        self.build(Default::default())
+    }
+
+    pub fn build_dynamic<'b, R: Default + IntoIterator<Item = ResourceBinding<'b>>>(
+        self,
+    ) -> Result<MaterialSystem<'b, DynamicResourceProvider<'b, R>>> {
+        self.build(Default::default())
     }
 }
 
-impl MaterialSystem {
-    pub fn get_effect_pipeline(&mut self, loader: &Loader, id: &Identifier) -> Result<&PipelineData> {
+impl<'a, R: ResourceProvider<'a>> MaterialSystem<'a, R> {
+    pub fn get_global_resources(&self) -> &R {
+        &self.global_resources
+    }
+
+    pub fn get_global_resources_mut(&mut self) -> &mut R {
+        &mut self.global_resources
+    }
+
+    pub fn try_get_local_resources(&self, id: &Identifier) -> Option<&PartialFrequencySet<R>> {
+        self.local_resources.get(id)
+    }
+
+    pub fn get_local_resources_mut(&mut self, id: &Identifier) -> Result<&mut PartialFrequencySet<R>> {
+        if self.effects.contains_key(id) {
+            Ok(self.local_resources.entry(id.clone()).or_insert_with(|| Default::default()))
+        } else {
+            Err(anyhow!("{} Not a valid shader effect", id))
+        }
+    }
+
+    pub fn get_effect_pipeline(
+        &mut self,
+        loader: &Loader,
+        id: &Identifier,
+    ) -> Result<&PipelineData> {
         if !self.pipelines.contains_key(id) {
             let pipeline = self.generate_effect_pipeline(loader, id)?;
             self.pipelines.insert(id.clone(), pipeline);
@@ -233,17 +336,28 @@ impl MaterialSystem {
     }
 
     fn generate_effect_pipeline(&self, loader: &Loader, id: &Identifier) -> Result<PipelineData> {
-        let effect = self.effects.get(id).ok_or(anyhow!("Effect {} does not exist", id))?;
+        let effect = self
+            .effects
+            .get(id)
+            .ok_or(anyhow!("Effect {} does not exist", id))?;
         let resources = effect.resources.iter().map(|resource| resource.as_ref());
-        let shaders = effect.shaders.iter().map(|id| self.shaders.get(id).unwrap());
+        let shaders = effect
+            .shaders
+            .iter()
+            .map(|id| self.shaders.get(id).unwrap());
 
         let layout = self.layouts.get(id).unwrap();
-        let local_sets = DescriptorSets::allocate(loader, &mut self.descriptor_pool.borrow_mut(), layout, None)?;
+        let local_sets =
+            DescriptorSets::allocate(loader, &mut self.descriptor_pool.borrow_mut(), layout, None)?;
 
         let render_pass = build_render_pass(loader, resources.clone())?;
         let pipeline = build_pipeline(loader, render_pass, layout, resources, shaders)?;
 
-        Ok(PipelineData { local_sets, pipeline, render_pass })
+        Ok(PipelineData {
+            local_sets,
+            pipeline,
+            render_pass,
+        })
     }
 }
 

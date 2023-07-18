@@ -249,9 +249,16 @@ impl ResourceReference<'_> {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct ResourceBinding<'a> {
     pub description: Rc<ResourceDescription>,
     pub reference: RedundantSet<ResourceReference<'a>>,
+}
+
+impl<'a> AsRef<ResourceBinding<'a>> for ResourceBinding<'a> {
+    fn as_ref(&self) -> &ResourceBinding<'a> {
+        &self
+    }
 }
 
 impl ResourceBinding<'_> {
