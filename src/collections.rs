@@ -163,25 +163,23 @@ pub struct PartialFrequencySet<T> {
 }
 
 impl<T> PartialFrequencySet<T> {
-    pub fn get(&self, frequency: vk::DescriptorFrequency) -> Option<&T> {
+    pub fn get(&self, frequency: vk::PartialDescriptorFrequency) -> &T {
         match frequency {
-            vk::DescriptorFrequency::Pass => Some(&self.pass),
-            vk::DescriptorFrequency::Material => Some(&self.material),
-            vk::DescriptorFrequency::Object => Some(&self.object),
-            _ => None,
+            vk::PartialDescriptorFrequency::Pass => &self.pass,
+            vk::PartialDescriptorFrequency::Material => &self.material,
+            vk::PartialDescriptorFrequency::Object => &self.object,
         }
     }
 
-    pub fn get_mut(&mut self, frequency: vk::DescriptorFrequency) -> Option<&mut T> {
+    pub fn get_mut(&mut self, frequency: vk::PartialDescriptorFrequency) -> &mut T {
         match frequency {
-            vk::DescriptorFrequency::Pass => Some(&mut self.pass),
-            vk::DescriptorFrequency::Material => Some(&mut self.material),
-            vk::DescriptorFrequency::Object => Some(&mut self.object),
-            _ => None,
+            vk::PartialDescriptorFrequency::Pass => &mut self.pass,
+            vk::PartialDescriptorFrequency::Material => &mut self.material,
+            vk::PartialDescriptorFrequency::Object => &mut self.object,
         }
     }
 
-    pub fn iter(&self) -> std::array::IntoIter<(vk::DescriptorFrequency, &T), 3> {
+    pub fn iter(&self) -> std::array::IntoIter<(vk::PartialDescriptorFrequency, &T), 3> {
         self.into_iter()
     }
 
@@ -259,37 +257,37 @@ impl<T, C: IntoIterator<Item = T>> PartialFrequencySet<C> {
 }
 
 impl<T> IntoIterator for PartialFrequencySet<T> {
-    type Item = (vk::DescriptorFrequency, T);
+    type Item = (vk::PartialDescriptorFrequency, T);
     type IntoIter = std::array::IntoIter<Self::Item, 3>;
 
     fn into_iter(self) -> Self::IntoIter {
         [
-            (vk::DescriptorFrequency::Pass, self.pass),
-            (vk::DescriptorFrequency::Material, self.material),
-            (vk::DescriptorFrequency::Object, self.object),
+            (vk::PartialDescriptorFrequency::Pass, self.pass),
+            (vk::PartialDescriptorFrequency::Material, self.material),
+            (vk::PartialDescriptorFrequency::Object, self.object),
         ]
         .into_iter()
     }
 }
 
 impl<'a, T> IntoIterator for &'a PartialFrequencySet<T> {
-    type Item = (vk::DescriptorFrequency, &'a T);
+    type Item = (vk::PartialDescriptorFrequency, &'a T);
     type IntoIter = std::array::IntoIter<Self::Item, 3>;
 
     fn into_iter(self) -> Self::IntoIter {
         [
-            (vk::DescriptorFrequency::Pass, &self.pass),
-            (vk::DescriptorFrequency::Material, &self.material),
-            (vk::DescriptorFrequency::Object, &self.object),
+            (vk::PartialDescriptorFrequency::Pass, &self.pass),
+            (vk::PartialDescriptorFrequency::Material, &self.material),
+            (vk::PartialDescriptorFrequency::Object, &self.object),
         ]
         .into_iter()
     }
 }
 
-impl<T, C: Default + Extend<T>> FromIterator<(vk::DescriptorFrequency, T)>
+impl<T, C: Default + Extend<T>> FromIterator<(vk::PartialDescriptorFrequency, T)>
     for PartialFrequencySet<C>
 {
-    fn from_iter<I: IntoIterator<Item = (vk::DescriptorFrequency, T)>>(iter: I) -> Self {
+    fn from_iter<I: IntoIterator<Item = (vk::PartialDescriptorFrequency, T)>>(iter: I) -> Self {
         iter.into_iter()
             .into_grouping_map()
             .collect::<C>()
@@ -297,9 +295,7 @@ impl<T, C: Default + Extend<T>> FromIterator<(vk::DescriptorFrequency, T)>
             .fold(
                 PartialFrequencySet::default(),
                 |mut set, (freq, collection)| {
-                    if let Some(value) = set.get_mut(freq) {
-                        *value = collection;
-                    }
+                    *set.get_mut(freq) = collection;
                     set
                 },
             )

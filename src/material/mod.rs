@@ -1,13 +1,17 @@
 use anyhow::{anyhow, Result};
 use bitflags::bitflags;
 use derive_more::{Deref, From, Into};
+use itertools::Itertools;
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use crate::{
     collections::{ParitySet, PartialFrequencySet},
     pipeline::{build_pipeline, build_render_pass},
     prelude::*,
-    resources::{DescriptorSets, Layouts, ResourceBinding, ResourceDescription},
+    resources::{
+        write_global_descriptor_sets, DescriptorSets, Discriminant, Layouts, ResourceBinding,
+        ResourceDescription,
+    },
 };
 
 bitflags! {
@@ -261,7 +265,18 @@ impl<'a> MaterialSystemBuilder<'a> {
         global_resource_provider: R,
     ) -> Result<MaterialSystem<'b, R>> {
         let descriptor_pool = RefCell::new(DescriptorPool::new(self.loader)?);
-        let layouts = Layouts::new(self.loader, self.shaders.iter())?;
+        let layouts = Layouts::new(
+            self.loader,
+            self.effects.iter().flat_map(|(effect_id, effect)| {
+                effect
+                    .shaders
+                    .iter()
+                    .map(|shader_id| self.shaders.get(shader_id).unwrap())
+                    // Okay so yes, this is a hack. But it stops the borrow checker from complaining soooo
+                    .zip([effect_id].into_iter().cycle())
+                    .map(|(k, v)| (v, k))
+            }),
+        )?;
         let global_sets = match layouts.global_layout {
             Some(layout) => Some(
                 descriptor_pool
@@ -314,11 +329,53 @@ impl<'a, R: ResourceProvider<'a>> MaterialSystem<'a, R> {
         self.local_resources.get(id)
     }
 
-    pub fn get_local_resources_mut(&mut self, id: &Identifier) -> Result<&mut PartialFrequencySet<R>> {
+    pub fn get_local_resources_mut(
+        &mut self,
+        id: &Identifier,
+    ) -> Result<&mut PartialFrequencySet<R>> {
         if self.effects.contains_key(id) {
-            Ok(self.local_resources.entry(id.clone()).or_insert_with(|| Default::default()))
+            Ok(self
+                .local_resources
+                .entry(id.clone())
+                .or_insert_with(|| Default::default()))
         } else {
             Err(anyhow!("{} Not a valid shader effect", id))
+        }
+    }
+
+    pub fn write_global_sets(&mut self, loader: &Loader) -> Result<()> {
+        if let Some(sets) = &self.global_sets {
+            let unmanaged = sets.as_ref().map(|managed| **managed);
+            let resources = self.global_resources.get_resources();
+            write_global_descriptor_sets(loader, resources, unmanaged)?
+        }
+
+        Ok(())
+    }
+
+    pub fn write_local_sets(
+        &mut self,
+        loader: &Loader,
+        id: &Identifier,
+        frequency: vk::PartialDescriptorFrequency,
+    ) -> Result<()> {
+        if let Some(pipeline) = self.pipelines.get(id) {
+            let resources = self
+                .local_resources
+                .get_mut(id)
+                .ok_or(anyhow!(
+                    "Local resource provider for effect {} has not yet been initialized",
+                    id
+                ))?
+                .get_mut(frequency)
+                .get_resources();
+            pipeline
+                .local_sets
+                .write_descriptor_sets(loader, resources)?;
+
+            Ok(())
+        } else {
+            Err(anyhow!("Effect {} does not exist", id))
         }
     }
 

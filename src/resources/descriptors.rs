@@ -30,7 +30,7 @@ impl Destructible for PipelineLayout {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-enum Discriminant {
+pub enum Discriminant {
     Global,
     Local(Identifier, vk::DescriptorFrequency),
 }
@@ -92,6 +92,12 @@ impl Destructible for Layouts {
 }
 
 impl Layouts {
+    /// ## Usage
+    /// `shaders` paramater is an iterator producing elements
+    /// of the form `(&pipeline_id, &shader_module)`.
+    ///
+    /// the `pipeline_id` **MUST** refer to the pipeline,
+    /// not the identifier of the shader itself
     pub fn new<'a, S: 'a>(loader: &Loader, shaders: S) -> Result<Layouts>
     where
         S: IntoIterator<Item = (&'a Identifier, &'a ShaderModule)> + Clone,
@@ -179,19 +185,17 @@ impl Layouts {
                 })
             })
             .collect::<std::result::Result<HashMap<_, _>, _>>()?;
-        
+
         let global_layout = descriptor_layouts.get(&Discriminant::Global).copied();
         let descriptors_flat = descriptor_layouts.into_values().collect::<Vec<_>>();
 
         Ok(Layouts {
             descriptors_flat,
             layouts,
-            global_layout
+            global_layout,
         })
     }
 }
-
-
 
 #[derive(Debug, Clone, Copy, IsVariant, Unwrap)]
 pub enum ResourceReference<'a> {
@@ -363,29 +367,39 @@ pub struct DescriptorSets {
 }
 
 impl DescriptorSets {
-    pub fn allocate(loader: &Loader, pool: &mut DescriptorPool, layout: &PipelineLayout, global_set: Option<ParitySet<vk::DescriptorSet>>) -> Result<Self> {
-        let (frequencies, layouts) = layout.descriptors
+    pub fn allocate(
+        loader: &Loader,
+        pool: &mut DescriptorPool,
+        layout: &PipelineLayout,
+        global_set: Option<ParitySet<vk::DescriptorSet>>,
+    ) -> Result<Self> {
+        let (frequencies, layouts) = layout
+            .descriptors
             .as_partial_frequency_set()
             .into_iter()
             .filter_map(|(freq, opt)| opt.as_ref().map(|&layout| (freq, layout)))
             .unzip::<_, _, Vec<_>, Vec<_>>();
 
-        let allocated_sets = ParitySet::from_fn(|| pool.allocate(loader, &layouts));
-        
+        let allocated_sets = if layouts.len() > 0 {
+            ParitySet::from_fn(|| pool.allocate(loader, &layouts))
+        } else {
+            ParitySet::from_fn(|| Ok(vec![]))
+        };
+
         let flattened_sets = std::iter::zip(allocated_sets.even?, allocated_sets.odd?)
             .map(|(even, odd)| ParitySet::new(even, odd))
             .collect_vec();
 
-        let sets = std::iter::zip(frequencies, flattened_sets).collect::<PartialFrequencySet<Vec<_>>>().map(|mut set| set.pop());
+        let sets = std::iter::zip(frequencies, flattened_sets)
+            .collect::<PartialFrequencySet<Vec<_>>>()
+            .map(|mut set| set.pop());
 
-        Ok(Self {
-            global_set,
-            sets
-        })
+        Ok(Self { global_set, sets })
     }
 
     pub fn get_unmanaged_sets(&self) -> PartialFrequencySet<Option<ParitySet<vk::DescriptorSet>>> {
-        self.sets.ref_map(|sets| sets.as_ref().map(|sets| sets.ref_map(|set| **set)))
+        self.sets
+            .ref_map(|sets| sets.as_ref().map(|sets| sets.ref_map(|set| **set)))
     }
 
     pub fn get_sets(&self) -> FrequencySet<Option<ParitySet<vk::DescriptorSet>>> {
@@ -393,13 +407,14 @@ impl DescriptorSets {
             .into_frequency_set(self.global_set)
     }
 
-    pub fn write_descriptor_sets<'a, R>(&self, loader: &Loader, resources: R) -> Result<()>
+    pub fn write_descriptor_sets<'a, R, I>(&self, loader: &Loader, resources: R) -> Result<()>
     where
-        R: IntoIterator<Item = &'a ResourceBinding<'a>>,
+        I: AsRef<ResourceBinding<'a>>,
+        R: IntoIterator<Item = I>,
     {
         let sets = self.get_unmanaged_sets().into_frequency_set(None);
         for resource in resources {
-            resource.write_partial(loader, sets)?;
+            resource.as_ref().write_partial(loader, sets)?;
         }
 
         Ok(())
@@ -412,16 +427,17 @@ impl Destructible for DescriptorSets {
     }
 }
 
-pub fn write_global_descriptor_sets<'a, R>(
+pub fn write_global_descriptor_sets<'a, I, R>(
     loader: &Loader,
     resources: R,
     sets: ParitySet<vk::DescriptorSet>,
 ) -> Result<()>
 where
-    R: IntoIterator<Item = &'a ResourceBinding<'a>>,
+    I: AsRef<ResourceBinding<'a>>,
+    R: IntoIterator<Item = I>,
 {
     for resource in resources {
-        resource.write_global(loader, sets)?;
+        resource.as_ref().write_global(loader, sets)?;
     }
 
     Ok(())

@@ -90,3 +90,31 @@ impl DescriptorFrequency {
         Self::Object
     ];
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum PartialDescriptorFrequency {
+    Pass,
+    Material,
+    Object,
+}
+
+impl From<PartialDescriptorFrequency> for DescriptorFrequency {
+    fn from(value: PartialDescriptorFrequency) -> Self {
+        match value {
+            PartialDescriptorFrequency::Pass => Self::Pass,
+            PartialDescriptorFrequency::Material => Self::Material,
+            PartialDescriptorFrequency::Object => Self::Object,
+        }
+    }
+}
+
+impl DescriptorFrequency {
+    pub fn to_partial(self) -> Option<PartialDescriptorFrequency> {
+        match self {
+            DescriptorFrequency::Global => None,
+            DescriptorFrequency::Pass => Some(PartialDescriptorFrequency::Pass),
+            DescriptorFrequency::Material => Some(PartialDescriptorFrequency::Material),
+            DescriptorFrequency::Object => Some(PartialDescriptorFrequency::Object),
+        }
+    }
+}

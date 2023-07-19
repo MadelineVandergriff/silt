@@ -140,6 +140,9 @@ fn main() -> Result<()> {
 
     let mut materials = materials.build_static()?;
     *materials.get_global_resources_mut() = vec![mvp_buffer.bind(), texture_image.bind()].into();
+    
+    materials.get_effect_pipeline(&loader, &effect)?;
+    materials.write_global_sets(&loader)?;
 
     Ok(())
 }
